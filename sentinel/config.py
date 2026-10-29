@@ -24,7 +24,8 @@ class Settings:
     # LLM
     llm_provider: str  # "openai" or "fake" (deterministic, no API calls; for tests and load tests)
     openai_api_key: str | None
-    openai_model: str
+    interviewer_model: str  # model routing: cheap and fast for extraction...
+    advisor_model: str      # ...and the one that reasons with tools for explanations
     fallback_model: str | None
     llm_timeout_s: float
     fake_llm_latency_ms: int
@@ -52,7 +53,7 @@ class Settings:
 
     @property
     def model_label(self) -> str:
-        return "fake" if self.llm_provider == "fake" else self.openai_model
+        return "fake" if self.llm_provider == "fake" else f"{self.interviewer_model}+{self.advisor_model}"
 
 
 def load_settings() -> Settings:
@@ -62,7 +63,8 @@ def load_settings() -> Settings:
         log_level=_env("LOG_LEVEL", "INFO") or "INFO",
         llm_provider=_env("LLM_PROVIDER", "openai") or "openai",
         openai_api_key=_env("OPENAI_API_KEY"),
-        openai_model=_env("OPENAI_MODEL", "gpt-5.4-mini") or "gpt-5.4-mini",
+        interviewer_model=_env("INTERVIEWER_MODEL", "gpt-5.4-mini") or "gpt-5.4-mini",
+        advisor_model=_env("ADVISOR_MODEL", "gpt-5.4-mini") or "gpt-5.4-mini",
         fallback_model=_env("FALLBACK_MODEL", "gpt-5-mini"),
         llm_timeout_s=float(_env("LLM_TIMEOUT_S", "30") or 30),
         fake_llm_latency_ms=_int("FAKE_LLM_LATENCY_MS", 300),

@@ -56,8 +56,12 @@ class AgentState(TypedDict, total=False):
     cb_person_cred_hist_length: Optional[int]
     cb_person_default_on_file: Optional[str]
 
+    tenant_id: str                         # set by the service on the first turn, never by the LLM
     details_confirmed: bool
-    assessment: Optional[dict[str, Any]]  # credit model output, set once scored
+    applicant_question: Optional[str]      # policy question the interviewer routed to the advisor
+    application_id: Optional[str]
+    assessment: Optional[dict[str, Any]]   # {"model": credit model output, "policy_decision", "policy_reason"}
+    final_decision: Optional[dict[str, Any]]  # {"decision", "decided_by", "note"}
     messages: Annotated[list[BaseMessage], add_messages]
 
 
@@ -77,6 +81,11 @@ class SentinelResponse(BaseModel):
     ]] = None
     loan_grade: Optional[Literal["A", "B", "C", "D", "E", "F", "G"]] = None
     cb_person_default_on_file: Optional[Literal["Y", "N"]] = None
+    applicant_question: Optional[str] = Field(
+        None,
+        description="If the applicant asked a question about the lender's rules, process, documents, rates, "
+                    "fees, limits or timelines, copy the question here. Leave empty otherwise.",
+    )
     details_confirmed: Optional[bool] = Field(
         None,
         description="True only when the summary has been shown and the user explicitly confirms it is "

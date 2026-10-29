@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from .service import ChatService
+from .service import ChatService, ReviewError
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class TelegramAdapter:
         self._api = f"https://api.telegram.org/bot{token}"
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(15, read=40))
         self._tasks: set[asyncio.Task[None]] = set()  # strong refs so running handlers aren't garbage-collected
+        service.on_notify(self._notify)
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -55,7 +56,11 @@ class TelegramAdapter:
 
         conversation_id = f"tg-{chat_id}"
         if text.startswith("/start"):
-            await self.service.reset(conversation_id)
+            try:
+                await self.service.reset(conversation_id)
+            except ReviewError as e:
+                await self.send(chat_id, str(e))
+                return
             await self.send(chat_id, WELCOME)
             return
 
@@ -67,6 +72,14 @@ class TelegramAdapter:
             # Thumbs up/down under the analyst's answers; the rating is scored on that turn's trace
             is_last = i == len(result.messages) - 1
             await self.send(chat_id, reply, feedback_for=result.trace_id if is_last and result.explained else None)
+
+    async def _notify(self, conversation_id: str, messages: list[str]) -> None:
+        """Underwriter decided: push the advisor's explanation to the applicant's chat."""
+        if not conversation_id.startswith("tg-"):
+            return
+        chat_id = int(conversation_id.removeprefix("tg-"))
+        for text in messages:
+            await self.send(chat_id, text)
 
     async def send(self, chat_id: int, text: str, feedback_for: str | None = None) -> None:
         params: dict[str, Any] = {"chat_id": chat_id, "text": text[:4096]}

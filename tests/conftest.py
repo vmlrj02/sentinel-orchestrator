@@ -7,8 +7,10 @@ from sentinel.agent.graph import build_graph
 from sentinel.agent.llm import FakeAgentLLM
 from sentinel.config import Settings, load_settings
 from sentinel.observability import Tracer
+from sentinel.rag import HashingEmbedder, Retriever, load_retriever
 from sentinel.scoring.model import LocalScorer
 from sentinel.service import ChatService
+from sentinel.store import MemoryApplicationStore
 
 # One full application in the fake LLM's field=value format
 APPLICATION_TURNS = [
@@ -17,6 +19,23 @@ APPLICATION_TURNS = [
     "loan_amnt=12000 loan_int_rate=11.2 loan_intent=EDUCATION",
     "loan_grade=B cb_person_cred_hist_length=5 cb_person_default_on_file=N",
 ]
+
+# Default risk ~0.53: Aster's review band is 30-60%, so this goes to a human underwriter
+REFERRED_TURNS = [
+    "person_name=Asha person_age=29",
+    "person_income=55000 person_emp_length=4 person_home_ownership=RENT",
+    "loan_amnt=18000 loan_int_rate=13 loan_intent=MEDICAL",
+    "loan_grade=C cb_person_cred_hist_length=5 cb_person_default_on_file=N",
+]
+
+_retriever: Retriever | None = None
+
+
+def retriever() -> Retriever:
+    global _retriever
+    if _retriever is None:
+        _retriever = load_retriever(HashingEmbedder())
+    return _retriever
 
 
 @pytest.fixture
@@ -34,8 +53,9 @@ def fake_llm() -> FakeAgentLLM:
 
 
 def make_service(settings: Settings, llm: FakeAgentLLM) -> ChatService:
-    graph = build_graph(llm, LocalScorer(), MemorySaver())
-    return ChatService(graph, settings, Tracer(enabled=False, environment="test"))
+    store = MemoryApplicationStore()
+    graph = build_graph(llm, LocalScorer(), retriever(), store, MemorySaver())
+    return ChatService(graph, settings, Tracer(enabled=False, environment="test"), store)
 
 
 @pytest.fixture

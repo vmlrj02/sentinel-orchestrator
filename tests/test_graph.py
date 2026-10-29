@@ -1,4 +1,4 @@
-from sentinel.agent.graph import route_after_interviewer, route_entry, summary_message
+from sentinel.agent.graph import route_after_interviewer, route_after_scoring, route_entry, summary_message
 from sentinel.agent.state import REQUIRED_FIELDS
 from tests.conftest import APPLICATION_TURNS
 
@@ -10,7 +10,11 @@ def test_routing():
     assert route_after_interviewer(ALL_FIELDS) == "__end__"  # complete but not confirmed
     assert route_after_interviewer({**ALL_FIELDS, "details_confirmed": True}) == "scoring"
     assert route_entry({**ALL_FIELDS, "details_confirmed": True}) == "scoring"  # retry after scoring failure
-    assert route_entry({**ALL_FIELDS, "assessment": {"prediction": 0}}) == "analyst"
+    assert route_entry({**ALL_FIELDS, "final_decision": {"decision": "approved"}}) == "advisor"
+    assert route_after_interviewer({"applicant_question": "fees?"}) == "advisor"
+    assert route_after_scoring({"assessment": {"policy_decision": "referred"}}) == "human_review"
+    assert route_after_scoring({"assessment": {"policy_decision": "approved"}}) == "advisor"
+    assert route_after_scoring({}) == "__end__"  # scoring failed: tell the user, retry next turn
 
 
 def test_summary_lists_every_field_readably():
@@ -32,7 +36,7 @@ async def test_full_application_shows_summary_then_scores_on_yes(service):
     assert result.assessment is None  # nothing is scored before the applicant confirms
 
     result = await service.run_turn("c1", "u1", "yes", "test")
-    assert result.assessment["decision"] in ("approved", "declined")
+    assert result.assessment["policy_decision"] == "approved"  # ~15% default risk, under Aster's 30%
     assert result.explained
 
     state = await service.get_state("c1")
@@ -52,10 +56,10 @@ async def test_correction_at_summary_requires_reconfirmation(service):
     assert result.assessment is not None
 
 
-async def test_follow_up_questions_go_to_analyst(service, fake_llm):
+async def test_follow_up_questions_go_to_advisor(service, fake_llm):
     for text in [*APPLICATION_TURNS, "yes"]:
         await service.run_turn("c3", "u1", text, "test")
     calls = fake_llm.calls
     result = await service.run_turn("c3", "u1", "why?", "test")
     assert result.explained and result.assessment is None
-    assert fake_llm.calls == calls + 1  # one analyst call, no re-interview, no re-scoring
+    assert fake_llm.calls == calls + 1  # one advisor call, no re-interview, no re-scoring

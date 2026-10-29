@@ -4,6 +4,7 @@ From github.com/vmlrj02/creditRiskModel-logisticRegression, with one fix: the si
 one-hot encoding no longer drops every categorical column.
 """
 import asyncio
+import hashlib
 import json
 from functools import cache
 from pathlib import Path
@@ -27,6 +28,11 @@ class CreditModel:
         self.model = joblib.load(model_dir / "logistic_credit_model.joblib")
         self.scaler = joblib.load(model_dir / "scaler.joblib")
         self.train_columns: list[str] = json.loads((model_dir / "train_columns.json").read_text())
+        # Recorded on every decision, so an audit can tell which model produced it
+        digest = hashlib.sha256()
+        for name in ("logistic_credit_model.joblib", "scaler.joblib", "train_columns.json"):
+            digest.update((model_dir / name).read_bytes())
+        self.version = f"logreg-{digest.hexdigest()[:10]}"
 
     def encode(self, data: dict[str, Any]) -> pd.DataFrame:
         # No drop_first: on a single row it would drop every categorical column.
@@ -57,6 +63,8 @@ def get_credit_model() -> CreditModel:
 
 
 class Scorer(Protocol):
+    version: str
+
     async def score(self, application: dict[str, Any]) -> dict[str, Any]: ...
 
 
@@ -65,6 +73,7 @@ class LocalScorer:
 
     def __init__(self, model: CreditModel | None = None) -> None:
         self.model = model or get_credit_model()
+        self.version = self.model.version
 
     async def score(self, application: dict[str, Any]) -> dict[str, Any]:
         features = {k: application.get(k) for k in MODEL_FEATURES}
@@ -76,6 +85,7 @@ class HttpScorer:
 
     def __init__(self, url: str, timeout_s: float = 10) -> None:
         self.url = url
+        self.version = f"remote:{url}"
         self.timeout_s = timeout_s
 
     async def score(self, application: dict[str, Any]) -> dict[str, Any]:

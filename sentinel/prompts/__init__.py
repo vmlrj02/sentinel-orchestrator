@@ -31,4 +31,4 @@ def load_prompt(name: str) -> Prompt:
 
 
 def prompt_versions() -> dict[str, str]:
-    return {f"prompt_{name}": load_prompt(name).version for name in ("interviewer", "analyst")}
+    return {f"prompt_{name}": load_prompt(name).version for name in ("interviewer", "advisor")}

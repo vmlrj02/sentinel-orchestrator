@@ -4,6 +4,7 @@ It owns the production concerns around a graph run:
 - per-conversation lock, so two fast messages in one chat are processed in order
 - a concurrency cap (backpressure towards the LLM provider), with queue-wait metrics
 - per-user rate limit, input validation, overall turn timeout
+- human review: pausing while an underwriter decides, resuming the graph, notifying the applicant
 - tracing, metrics and structured logs for every turn
 """
 import asyncio
@@ -11,12 +12,13 @@ import logging
 import time
 import weakref
 from collections import OrderedDict, deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langgraph.types import Command
 
 from .agent.state import REQUIRED_FIELDS, application_fields
 from .config import Settings
@@ -24,10 +26,13 @@ from .logging_setup import channel_var, conversation_id_var, trace_id_var
 from .metrics import IN_FLIGHT, QUEUE_WAIT, RATE_LIMITED, TURN_LATENCY, TURNS
 from .observability import Tracer
 from .prompts import prompt_versions
+from .store import ApplicationRecord, ApplicationStore
+from .tenants import DEFAULT_TENANT, TENANTS, get_tenant
 
 logger = logging.getLogger(__name__)
 
 Event = dict[str, Any]
+Notifier = Callable[[str, list[str]], Awaitable[None]]
 
 
 class RateLimiter:
@@ -65,6 +70,10 @@ class SeenIds:
         return True
 
 
+class ReviewError(Exception):
+    pass
+
+
 @dataclass
 class TurnResult:
     conversation_id: str
@@ -72,18 +81,26 @@ class TurnResult:
     messages: list[str] = field(default_factory=list)
     assessment: dict[str, Any] | None = None
     error: str | None = None
-    explained: bool = False  # the analyst wrote this turn's reply (decision explanation or follow-up)
+    explained: bool = False  # the advisor wrote this turn's reply (decision explanation or answer)
+    tools: list[str] = field(default_factory=list)
+    citations: list[str] = field(default_factory=list)
 
 
 class ChatService:
-    def __init__(self, graph: Any, settings: Settings, tracer: Tracer) -> None:
+    def __init__(self, graph: Any, settings: Settings, tracer: Tracer, store: ApplicationStore) -> None:
         self.graph = graph
         self.settings = settings
         self.tracer = tracer
+        self.store = store
         self._slots = asyncio.Semaphore(settings.max_concurrent_turns)
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         self._rate = RateLimiter(settings.rate_limit_per_minute)
+        self._notifiers: list[Notifier] = []
         self.seen_messages = SeenIds()
+
+    def on_notify(self, notifier: Notifier) -> None:
+        """Channels register here to push messages that arrive outside a turn (underwriter decisions)."""
+        self._notifiers.append(notifier)
 
     def _lock(self, conversation_id: str) -> asyncio.Lock:
         lock = self._locks.get(conversation_id)
@@ -92,9 +109,19 @@ class ChatService:
             self._locks[conversation_id] = lock
         return lock
 
+    def _config(self, conversation_id: str, trace_id: str, user_id: str, channel: str,
+                tags: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "configurable": {"thread_id": conversation_id, "trace_id": trace_id},
+            "recursion_limit": 15,  # longest legit path is ~9 steps (3 tool rounds); more is a bug
+            **self.tracer.run_config(trace_id=trace_id, conversation_id=conversation_id, user_id=user_id,
+                                     channel=channel, prompt_versions=prompt_versions(), tags=tags),
+        }
+
     async def stream_turn(self, conversation_id: str, user_id: str, text: str, channel: str,
-                          tags: list[str] | None = None) -> AsyncIterator[Event]:
-        """Runs one turn and yields events: status, assessment, token, message, then done or error."""
+                          tenant_id: str | None = None, tags: list[str] | None = None) -> AsyncIterator[Event]:
+        """Runs one turn and yields events: status, citations, tool_call, assessment, token, message,
+        then done or error."""
         trace_id = self.tracer.new_trace_id()
         conversation_id_var.set(conversation_id)
         trace_id_var.set(trace_id)
@@ -108,6 +135,9 @@ class ChatService:
             yield {"type": "error", "code": "message_too_long",
                    "message": f"Please keep messages under {self.settings.max_message_chars} characters."}
             return
+        if tenant_id is not None and tenant_id not in TENANTS:
+            yield {"type": "error", "code": "unknown_lender", "message": "Unknown lender."}
+            return
         if not self._rate.allow(user_id):
             RATE_LIMITED.labels(channel).inc()
             TURNS.labels(channel, "rate_limited").inc()
@@ -117,24 +147,21 @@ class ChatService:
 
         started = time.perf_counter()
         outcome = "ok"
-        config = {
-            "configurable": {"thread_id": conversation_id},
-            "recursion_limit": 10,  # interviewer -> scoring -> analyst is 3 steps; anything more is a bug
-            **self.tracer.run_config(trace_id=trace_id, conversation_id=conversation_id, user_id=user_id,
-                                     channel=channel, prompt_versions=prompt_versions(), tags=tags),
-        }
+        config = self._config(conversation_id, trace_id, user_id, channel, tags)
         try:
             async with self._lock(conversation_id):
-                queued = time.perf_counter()
-                async with self._slots:
-                    QUEUE_WAIT.observe(time.perf_counter() - queued)
-                    IN_FLIGHT.inc()
-                    try:
-                        async with asyncio.timeout(self.settings.turn_timeout_s):
-                            async for event in self._run_graph(text, config):
-                                yield event
-                    finally:
-                        IN_FLIGHT.dec()
+                snapshot = await self.graph.aget_state(config)
+                if snapshot.interrupts:
+                    outcome = "under_review"
+                    yield {"type": "message", "node": "service", "text": (
+                        "Your application is with an underwriter right now. I'll message you here as soon as "
+                        "they decide.")}
+                else:
+                    graph_input: dict[str, Any] = {"messages": [HumanMessage(text)]}
+                    if not snapshot.values.get("tenant_id"):
+                        graph_input["tenant_id"] = tenant_id or DEFAULT_TENANT
+                    async for event in self._run(graph_input, config):
+                        yield event
             yield {"type": "done", "conversation_id": conversation_id, "trace_id": trace_id,
                    "trace_url": self.tracer.trace_url(trace_id)}
         except TimeoutError:
@@ -156,56 +183,105 @@ class ChatService:
             if self.settings.flush_traces_each_turn:
                 await asyncio.to_thread(self.tracer.flush)
 
-    async def _run_graph(self, text: str, config: dict[str, Any]) -> AsyncIterator[Event]:
-        async for mode, chunk in self.graph.astream(
-            {"messages": [HumanMessage(text)]}, config, stream_mode=["custom", "updates"]
-        ):
-            if mode == "custom":
-                yield chunk
-                continue
-            for node, update in chunk.items():
-                for message in (update or {}).get("messages", []):
-                    if isinstance(message, AIMessage):
-                        yield {"type": "message", "text": message.content, "node": node}
+    async def _run(self, graph_input: Any, config: dict[str, Any]) -> AsyncIterator[Event]:
+        """One graph run under the concurrency cap and timeout, translated into channel events."""
+        queued = time.perf_counter()
+        async with self._slots:
+            QUEUE_WAIT.observe(time.perf_counter() - queued)
+            IN_FLIGHT.inc()
+            try:
+                async with asyncio.timeout(self.settings.turn_timeout_s):
+                    async for mode, chunk in self.graph.astream(graph_input, config,
+                                                                stream_mode=["custom", "updates"]):
+                        if mode == "custom":
+                            yield chunk
+                            continue
+                        for node, update in chunk.items():
+                            if node == "__interrupt__":
+                                yield {"type": "under_review"}
+                                continue
+                            for message in (update or {}).get("messages", []):
+                                if isinstance(message, AIMessage) and message.content:
+                                    yield {"type": "message", "text": message.content, "node": node}
+            finally:
+                IN_FLIGHT.dec()
 
     async def run_turn(self, conversation_id: str, user_id: str, text: str, channel: str,
-                       tags: list[str] | None = None) -> TurnResult:
+                       tenant_id: str | None = None, tags: list[str] | None = None) -> TurnResult:
         """Non-streaming version for channels that send whole messages (Telegram, evals)."""
-        result = TurnResult(conversation_id=conversation_id, trace_id="")
-        async for event in self.stream_turn(conversation_id, user_id, text, channel, tags):
-            if event["type"] == "message":
-                result.messages.append(event["text"])
-                result.explained = event.get("node") == "analyst"
-            elif event["type"] == "assessment":
-                result.assessment = event["assessment"]
-            elif event["type"] == "error":
-                result.error = event["code"]
-                result.messages.append(event["message"])
-            if "trace_id" in event:
-                result.trace_id = event["trace_id"]
+        return await _collect(conversation_id, self.stream_turn(conversation_id, user_id, text, channel,
+                                                                tenant_id, tags))
+
+    # --- Human review -----------------------------------------------------------------------------
+
+    async def list_reviews(self, tenant_id: str | None = None) -> list[ApplicationRecord]:
+        return await self.store.list(status="pending_review", tenant_id=tenant_id)
+
+    async def submit_review(self, application_id: str, decision: Literal["approved", "declined"],
+                            reviewer: str, note: str | None = None) -> TurnResult:
+        """Underwriter decision: resumes the paused graph, which records it and explains it to the applicant."""
+        record = await self.store.get(application_id)
+        if record is None or record.status != "pending_review":
+            raise ReviewError(f"{application_id} is not awaiting review")
+        trace_id = self.tracer.new_trace_id()
+        config = self._config(record.conversation_id, trace_id, f"underwriter-{reviewer}", "review",
+                              tags=["human_review"])
+        async with self._lock(record.conversation_id):
+            snapshot = await self.graph.aget_state(config)
+            if not snapshot.interrupts:
+                raise ReviewError(f"{application_id} has no paused review")
+            resume: Command[Any] = Command(resume={"decision": decision, "reviewer": reviewer, "note": note})
+            result = await _collect(record.conversation_id, self._run(resume, config))
+        result.trace_id = trace_id
+        logger.info("Review submitted", extra={"fields": {"application_id": application_id, "decision": decision,
+                                                          "reviewer": reviewer}})
+        for notify in self._notifiers:
+            try:
+                await notify(record.conversation_id, result.messages)
+            except Exception:
+                logger.exception("Notifier failed")
         return result
+
+    # --- Conversation state -------------------------------------------------------------------------
 
     async def get_state(self, conversation_id: str) -> dict[str, Any]:
         snapshot = await self.graph.aget_state({"configurable": {"thread_id": conversation_id}})
         values = snapshot.values or {}
+        missing = [f for f in REQUIRED_FIELDS if values.get(f) is None]
+        if snapshot.interrupts:
+            status = "under_review"
+        elif values.get("final_decision"):
+            status = "decided"
+        elif values.get("messages") and not missing:
+            status = "confirming"
+        else:
+            status = "collecting"
+        tenant = get_tenant(values.get("tenant_id"))
         return {
             "conversation_id": conversation_id,
+            "status": status,
+            "lender": {"id": tenant.id, "name": tenant.name},
+            "application_id": values.get("application_id"),
             "application": application_fields(values),
-            "missing": [f for f in REQUIRED_FIELDS if values.get(f) is None],
-            "details_confirmed": bool(values.get("details_confirmed")),
+            "missing": missing,
             "assessment": values.get("assessment"),
+            "final_decision": values.get("final_decision"),
             "messages": [{"role": "user" if isinstance(m, HumanMessage) else "assistant", "text": m.content}
-                         for m in values.get("messages", [])],
+                         for m in values.get("messages", [])
+                         if isinstance(m, HumanMessage) or (isinstance(m, AIMessage) and m.content)],
         }
 
     async def reset(self, conversation_id: str) -> None:
         """Start a fresh application in the same conversation (Telegram /start)."""
         config = {"configurable": {"thread_id": conversation_id}}
-        cleared: dict[str, Any] = {f: None for f in [*REQUIRED_FIELDS, "loan_percent_income", "assessment"]}
+        cleared: dict[str, Any] = {f: None for f in [*REQUIRED_FIELDS, "loan_percent_income", "assessment",
+                                                     "final_decision", "application_id", "applicant_question"]}
         async with self._lock(conversation_id):
+            snapshot = await self.graph.aget_state(config)
+            if snapshot.interrupts:
+                raise ReviewError("This application is with an underwriter and can't be restarted yet.")
             await self.graph.aupdate_state(
-                config,
-                {**cleared, "details_confirmed": False, "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]},
+                config, {**cleared, "details_confirmed": False, "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]},
                 as_node="interviewer",
             )
 
@@ -213,3 +289,24 @@ class ChatService:
         from .metrics import FEEDBACK
         FEEDBACK.labels("up" if rating > 0 else "down").inc()
         self.tracer.score(trace_id, "user_feedback", 1.0 if rating > 0 else 0.0, comment)
+
+
+async def _collect(conversation_id: str, events: AsyncIterator[Event]) -> TurnResult:
+    result = TurnResult(conversation_id=conversation_id, trace_id="")
+    async for event in events:
+        kind = event["type"]
+        if kind == "message":
+            result.messages.append(event["text"])
+            result.explained = event.get("node") == "advisor"
+        elif kind == "assessment":
+            result.assessment = event
+        elif kind == "tool_call":
+            result.tools.append(event["name"])
+        elif kind == "citations":
+            result.citations.extend(item["id"] for item in event["items"])
+        elif kind == "error":
+            result.error = event["code"]
+            result.messages.append(event["message"])
+        if "trace_id" in event:
+            result.trace_id = event["trace_id"]
+    return result

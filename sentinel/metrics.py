@@ -19,6 +19,7 @@ QUEUE_WAIT = Histogram(
 IN_FLIGHT = Gauge("sentinel_turns_in_flight", "Chat turns currently running")
 RATE_LIMITED = Counter("sentinel_rate_limited_total", "Turns rejected by the per-user rate limit", ["channel"])
 DECISIONS = Counter("sentinel_decisions_total", "Credit decisions made", ["decision"])
+INVALID_CITATIONS = Counter("sentinel_invalid_citations_total", "Citations removed because they were not retrieved")
 FEEDBACK = Counter("sentinel_feedback_total", "User feedback on replies", ["rating"])
 
 LLM_CALLS = Counter("sentinel_llm_calls_total", "LLM calls", ["model", "outcome"])
@@ -54,3 +55,58 @@ class LLMMetricsCallback(AsyncCallbackHandler):
     async def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
         _, model = self._started.pop(run_id, (0.0, "unknown"))
         LLM_CALLS.labels(model, "error").inc()
+
+
+def _quantile(buckets: list[tuple[float, float]], q: float) -> float | None:
+    """Approximate quantile from cumulative histogram buckets (upper bound of the bucket it falls in)."""
+    total = buckets[-1][1] if buckets else 0
+    if not total:
+        return None
+    for upper, count in buckets:
+        if count >= q * total:
+            return upper
+    return buckets[-1][0]
+
+
+def snapshot() -> dict[str, Any]:
+    """Live numbers for the UI's System panel. Same data Prometheus/CloudWatch would scrape."""
+    from prometheus_client import REGISTRY
+
+    turns: dict[str, float] = {}
+    decisions: dict[str, float] = {}
+    tokens: dict[str, float] = {}
+    feedback: dict[str, float] = {}
+    llm_errors = llm_calls = in_flight = rate_limited = 0.0
+    latency: dict[float, float] = {}
+    for metric in REGISTRY.collect():
+        for s in metric.samples:
+            if s.name == "sentinel_turns_total":
+                turns[s.labels["outcome"]] = turns.get(s.labels["outcome"], 0) + s.value
+            elif s.name == "sentinel_turn_latency_seconds_bucket" and s.labels.get("channel") != "eval":
+                bound = float(s.labels["le"])
+                latency[bound] = latency.get(bound, 0) + s.value
+            elif s.name == "sentinel_decisions_total":
+                decisions[s.labels["decision"]] = s.value
+            elif s.name == "sentinel_llm_tokens_total":
+                tokens[s.labels["kind"]] = tokens.get(s.labels["kind"], 0) + s.value
+            elif s.name == "sentinel_llm_calls_total":
+                llm_calls += s.value
+                llm_errors += s.value if s.labels["outcome"] == "error" else 0
+            elif s.name == "sentinel_turns_in_flight":
+                in_flight = s.value
+            elif s.name == "sentinel_rate_limited_total":
+                rate_limited += s.value
+            elif s.name == "sentinel_feedback_total":
+                feedback[s.labels["rating"]] = s.value
+    buckets = sorted(latency.items())
+    total_turns = sum(turns.values())
+    return {
+        "turns": {"total": total_turns, **turns},
+        "latency_s": {"p50": _quantile(buckets, 0.5), "p95": _quantile(buckets, 0.95)},
+        "in_flight": in_flight,
+        "rate_limited": rate_limited,
+        "llm": {"calls": llm_calls, "errors": llm_errors, "tokens": tokens,
+                "tokens_per_turn": round(sum(tokens.values()) / total_turns) if total_turns else None},
+        "decisions": decisions,
+        "feedback": feedback,
+    }
