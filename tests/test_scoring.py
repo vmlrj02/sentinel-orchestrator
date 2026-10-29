@@ -1,8 +1,4 @@
-from fastapi.testclient import TestClient
-
-from scoring.app import app, encode
-
-client = TestClient(app)
+from sentinel.scoring.model import get_credit_model
 
 APPLICANT = {
     "person_age": 30, "person_income": 60000, "person_emp_length": 5,
@@ -13,7 +9,7 @@ APPLICANT = {
 
 
 def test_categoricals_are_encoded_for_a_single_row():
-    row = encode(APPLICANT).iloc[0]
+    row = get_credit_model().encode(APPLICANT).iloc[0]
     assert row["person_home_ownership_RENT"] == 1
     assert row["loan_intent_EDUCATION"] == 1
     assert row["loan_grade_B"] == 1
@@ -21,14 +17,13 @@ def test_categoricals_are_encoded_for_a_single_row():
 
 
 def test_predict_returns_decision_and_explanations():
-    body = client.post("/predict", json={"data": APPLICANT}).json()
-    assert body["prediction"] in (0, 1)
-    assert 0 <= body["probability"] <= 1
-    assert len(body["explanations"]["top_risk_factors"]) == 2
+    result = get_credit_model().predict(APPLICANT)
+    assert result["decision"] == ("declined" if result["prediction"] else "approved")
+    assert 0 <= result["probability"] <= 1
+    assert len(result["explanations"]["top_risk_factors"]) == 2
 
 
 def test_categoricals_change_the_score():
     risky = {**APPLICANT, "loan_grade": "G", "cb_person_default_on_file": "Y"}
-    p_safe = client.post("/predict", json={"data": APPLICANT}).json()["probability"]
-    p_risky = client.post("/predict", json={"data": risky}).json()["probability"]
-    assert p_risky > p_safe
+    model = get_credit_model()
+    assert model.predict(risky)["probability"] > model.predict(APPLICANT)["probability"]

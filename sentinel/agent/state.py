@@ -1,14 +1,40 @@
-from typing import Annotated, Literal, Optional
-from typing_extensions import TypedDict
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, Optional
+
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 REQUIRED_FIELDS = [
     "person_name", "person_age", "person_income", "person_emp_length",
     "person_home_ownership", "loan_amnt", "loan_int_rate", "loan_intent",
     "loan_grade", "cb_person_cred_hist_length", "cb_person_default_on_file",
 ]
+
+# Plain-language meaning of each field, shown to the interviewer LLM
+FIELD_LABELS = {
+    "person_name": "full name",
+    "person_age": "age in years",
+    "person_income": "annual income",
+    "person_emp_length": "years at current job",
+    "person_home_ownership": "whether they rent, own, have a mortgage, or other",
+    "loan_amnt": "loan amount requested",
+    "loan_int_rate": "loan interest rate in percent",
+    "loan_intent": "purpose of the loan",
+    "loan_grade": "loan grade A to G",
+    "cb_person_cred_hist_length": "length of credit history in years",
+    "cb_person_default_on_file": "whether they have ever defaulted before",
+}
+
+# Labels for the confirmation summary shown to the applicant
+SUMMARY_LABELS = {
+    "person_name": "Name", "person_age": "Age", "person_income": "Annual income",
+    "person_emp_length": "Years at current job", "person_home_ownership": "Home",
+    "loan_amnt": "Loan amount", "loan_int_rate": "Interest rate (%)", "loan_intent": "Purpose",
+    "loan_grade": "Loan grade", "cb_person_cred_hist_length": "Credit history (years)",
+    "cb_person_default_on_file": "Previous default",
+}
 
 
 class AgentState(TypedDict, total=False):
@@ -31,7 +57,7 @@ class AgentState(TypedDict, total=False):
     cb_person_default_on_file: Optional[str]
 
     details_confirmed: bool
-    is_processed: bool
+    assessment: Optional[dict[str, Any]]  # credit model output, set once scored
     messages: Annotated[list[BaseMessage], add_messages]
 
 
@@ -53,14 +79,18 @@ class SentinelResponse(BaseModel):
     cb_person_default_on_file: Optional[Literal["Y", "N"]] = None
     details_confirmed: Optional[bool] = Field(
         None,
-        description="True only when every field is collected, the summary has been shown, "
-                    "and the user explicitly confirms it is correct. False if they say something is wrong.",
+        description="True only when the summary has been shown and the user explicitly confirms it is "
+                    "correct. False if they say something is wrong.",
     )
 
 
-def missing_fields(state: AgentState) -> list[str]:
+def missing_fields(state: Mapping[str, Any]) -> list[str]:
     return [f for f in REQUIRED_FIELDS if state.get(f) is None]
 
 
-def ready_for_scoring(state: AgentState) -> bool:
+def ready_for_scoring(state: Mapping[str, Any]) -> bool:
     return not missing_fields(state) and bool(state.get("details_confirmed"))
+
+
+def application_fields(state: Mapping[str, Any]) -> dict[str, Any]:
+    return {f: state.get(f) for f in [*REQUIRED_FIELDS, "loan_percent_income"] if state.get(f) is not None}

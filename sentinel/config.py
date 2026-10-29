@@ -1,0 +1,82 @@
+"""All runtime configuration, read once from the environment (.env locally, Lambda env vars in AWS)."""
+import os
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _env(name: str, default: str | None = None) -> str | None:
+    value = os.getenv(name)
+    return value.strip() if value and value.strip() else default
+
+
+def _int(name: str, default: int) -> int:
+    return int(_env(name, str(default)))  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True)
+class Settings:
+    environment: str
+    log_level: str
+
+    # LLM
+    llm_provider: str  # "openai" or "fake" (deterministic, no API calls; for tests and load tests)
+    openai_api_key: str | None
+    openai_model: str
+    fallback_model: str | None
+    llm_timeout_s: float
+    fake_llm_latency_ms: int
+
+    # Conversation state
+    checkpointer: str  # "memory" or "sqlite"
+    sqlite_path: str
+
+    # Guards
+    max_concurrent_turns: int
+    rate_limit_per_minute: int
+    turn_timeout_s: float
+    max_message_chars: int
+    max_history_messages: int
+
+    # Telegram
+    telegram_token: str | None
+    telegram_mode: str  # "polling" (local), "webhook" (Lambda) or "off"
+    telegram_webhook_secret: str | None
+    allowed_chat_ids: frozenset[int]
+
+    # Observability
+    langfuse_enabled: bool
+    flush_traces_each_turn: bool  # needed on Lambda, where the process freezes after a response
+
+    @property
+    def model_label(self) -> str:
+        return "fake" if self.llm_provider == "fake" else self.openai_model
+
+
+def load_settings() -> Settings:
+    chat_ids = (_env("ALLOWED_CHAT_IDS", "") or "").replace(" ", "")
+    return Settings(
+        environment=_env("ENVIRONMENT", "local") or "local",
+        log_level=_env("LOG_LEVEL", "INFO") or "INFO",
+        llm_provider=_env("LLM_PROVIDER", "openai") or "openai",
+        openai_api_key=_env("OPENAI_API_KEY"),
+        openai_model=_env("OPENAI_MODEL", "gpt-5.4-mini") or "gpt-5.4-mini",
+        fallback_model=_env("FALLBACK_MODEL", "gpt-5-mini"),
+        llm_timeout_s=float(_env("LLM_TIMEOUT_S", "30") or 30),
+        fake_llm_latency_ms=_int("FAKE_LLM_LATENCY_MS", 300),
+        checkpointer=_env("CHECKPOINTER", "sqlite") or "sqlite",
+        sqlite_path=_env("SQLITE_PATH", "data/sentinel.db") or "data/sentinel.db",
+        max_concurrent_turns=_int("MAX_CONCURRENT_TURNS", 50),
+        rate_limit_per_minute=_int("RATE_LIMIT_PER_MINUTE", 20),
+        turn_timeout_s=float(_env("TURN_TIMEOUT_S", "60") or 60),
+        max_message_chars=_int("MAX_MESSAGE_CHARS", 1000),
+        max_history_messages=_int("MAX_HISTORY_MESSAGES", 30),
+        telegram_token=_env("TELEGRAM_TOKEN"),
+        telegram_mode=_env("TELEGRAM_MODE", "polling") or "polling",
+        telegram_webhook_secret=_env("TELEGRAM_WEBHOOK_SECRET"),
+        allowed_chat_ids=frozenset(int(x) for x in chat_ids.split(",") if x),
+        langfuse_enabled=bool(_env("LANGFUSE_PUBLIC_KEY") and _env("LANGFUSE_SECRET_KEY")),
+        flush_traces_each_turn=(_env("FLUSH_TRACES_EACH_TURN", "false") or "false").lower() == "true",
+    )
