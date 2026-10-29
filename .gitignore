@@ -1,0 +1,15 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# local
+_scratch/
+logs/
+.DS_Store
+.ipynb_checkpoints/
