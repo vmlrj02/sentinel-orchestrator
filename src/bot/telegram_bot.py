@@ -60,8 +60,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def start_bot():
     """Starts the bot using the library's internal loop management."""
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    application = (
+        ApplicationBuilder()
+        .token(TELEGRAM_TOKEN)
+        .connect_timeout(15)
+        .get_updates_connect_timeout(15)
+        .build()
+    )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logger.info("Sentinel bot is live")
-    application.run_polling(drop_pending_updates=True)
+    logger.info("Sentinel bot starting")
+    # Keep retrying the first connection (e.g. Wi-Fi not up yet at login) instead of exiting
+    application.run_polling(drop_pending_updates=True, bootstrap_retries=-1)
