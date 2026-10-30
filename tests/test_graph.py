@@ -96,7 +96,8 @@ def test_parse_number():
     from sentinel.agent.validation import parse_number
     cases = {"1": 1, "12k": 12_000, "12,000": 12_000, "11.5%": 11.5, "8 lakhs": 800_000, "$5000": 5_000,
              "4 years": 4, "-10000": -10_000, "₹ 2.5 lakh": 250_000, "fourty": 40, "fifty 1": 51,
-             "twenty-five": 25, "forty five years": 45, "seven": 7, "Ninety nine": 99}
+             "twenty-five": 25, "forty five years": 45, "seven": 7, "Ninety nine": 99, "nine lakhs": 900_000,
+             "twelve thousand": 12_000, "fifty five k": 55_000}
     for text, expected in cases.items():
         assert parse_number(text) == expected, text
     for text in ["idk", "how much ever you can give", "12 or 13", "age 30 and income 5000", "hey", "vaa muthu",

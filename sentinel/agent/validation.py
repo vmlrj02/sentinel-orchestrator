@@ -22,7 +22,9 @@ _UNITS = {w: i for i, w in enumerate(
     "seventeen eighteen nineteen".split())}
 _TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
          "eighty": 80, "ninety": 90, "ninty": 90}
-_WORDS = re.compile(r"\s*(?P<tens>[a-z]+)?(?:[\s-]+(?P<unit>[a-z]+|\d))?\s*(?:years?( old)?|yrs?)?\s*\.?\s*", re.I)
+_WORDS = re.compile(r"\s*(?P<tens>[a-z]+)?(?:[\s-]+(?P<unit>[a-z]+|\d))??"
+                    r"(?:\s+(?P<mult>k|thousand|lakhs?|lacs?|crores?|million))?"
+                    r"\s*(?:years?( old)?|yrs?|percent|%)?\s*\.?\s*", re.I)
 
 
 def parse_number_words(text: str) -> float | None:
@@ -31,12 +33,14 @@ def parse_number_words(text: str) -> float | None:
     if not match or not match.group("tens"):
         return None
     tens, unit = match.group("tens"), match.group("unit")
+    multiplier = _MULTIPLIERS.get((match.group("mult") or "").lower(), 1)
     if unit is None:
-        return float(_TENS.get(tens, _UNITS.get(tens, -1))) if (tens in _TENS or tens in _UNITS) else None
-    unit_value = int(unit) if unit.isdigit() else _UNITS.get(unit)
-    if tens in _TENS and unit_value is not None and 0 < unit_value < 10:
-        return float(_TENS[tens] + unit_value)
-    return None
+        value = _TENS.get(tens, _UNITS.get(tens))
+    else:
+        unit_value = int(unit) if unit.isdigit() else _UNITS.get(unit)
+        value = _TENS[tens] + unit_value if tens in _TENS and unit_value is not None and 0 < unit_value < 10 \
+            else None
+    return None if value is None else float(value * multiplier)
 
 
 def parse_number(text: str) -> float | None:

@@ -14,11 +14,18 @@ _COMMANDS = [
 ]
 
 
+# Confusion about the current question, said many ways: searched for within short messages
+_CLARIFY = re.compile(r"^(what\??|huh|pardon)$|what do you (even )?mean|i don'?t (understand|get it)|"
+                      r"what does (that|this|it) mean|i'?m confused|^explain|(rent|own|grade|default|rate) what")
+
+
 def match_command(text: str) -> tuple[str, str] | None:
     """The whole message must be the command ("change my income", not a sentence that mentions it)."""
     cleaned = re.sub(r"\s+", " ", text.strip().lower())
     cleaned = cleaned if cleaned == "?" else cleaned.rstrip(".!?")
     cleaned = re.sub(r"^(please|pls|can i|could i|i want to|i'd like to)\s+", "", cleaned)
+    if len(cleaned.split()) <= 8 and not re.search(r"\d", cleaned) and _CLARIFY.search(cleaned):
+        return "clarify", ""
     for name, pattern in _COMMANDS:
         if match := re.fullmatch(rf"{pattern}( please)?", cleaned):
             what = (match.groupdict().get("what") or "").removesuffix(" please")

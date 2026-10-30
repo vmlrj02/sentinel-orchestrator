@@ -37,6 +37,28 @@ EXAMPLES = {
     "cb_person_cred_hist_length": "a number of years, like 5",
 }
 
+# Plain-language explanations for "what?" / "what do you mean?" about the current question
+EXPLANATIONS = {
+    "person_age": "I need your age in years, for example 32. You must be at least 18 to apply.",
+    "person_income": "Your total income for a year before tax, from salary, business, pension or other sources. "
+                     "For example 55000, 55k or 9 lakhs.",
+    "person_emp_length": "How long you've worked for your current employer, in years. For example 3, or 1.5 for "
+                         "a year and a half. If you're self-employed, how long you've run your business.",
+    "person_home_ownership": "This is about where you live: do you pay rent, own your home outright, own it with a "
+                             "mortgage (a home loan you're still paying), or something else, like living with family?",
+    "loan_amnt": "The amount you'd like to borrow, for example 12000 or 12k.",
+    "loan_int_rate": "The yearly interest rate on the loan, as a percentage, for example 11.5. If you haven't been "
+                     "offered one yet, a typical rate for a good credit profile is around 10 to 12.",
+    "loan_intent": "What you'll use the money for, so we can apply the right policy: everyday personal costs, "
+                   "education, medical bills, a business, home improvements, or paying off other debts.",
+    "loan_grade": "Your loan grade (A to G) is a rating from your credit report or loan offer; A is the strongest. "
+                  "If you don't know it, B or C is common.",
+    "cb_person_cred_hist_length": "How many years since you first had a credit account, like a credit card or "
+                                  "loan. For example 5.",
+    "cb_person_default_on_file": "Whether you've ever failed to repay a loan or credit card as agreed (a default). "
+                                 "Late payments that you later caught up on don't count.",
+}
+
 ESCAPES = ["Skip for now", "Start over", "Talk to a person"]
 CHANGE_OPTIONS = ["Change loan amount", "Change income", "Change interest rate", "Start over"]
 
@@ -118,6 +140,15 @@ def question_message(state: Mapping[str, Any], prefix: str = "Thanks.", attempt:
         lines.append("Or, if you'd rather, skip this for now, start over, or ask to talk to a person.")
         options += ESCAPES
     return AIMessage("\n\n".join(lines), response_metadata={"options": options} if options else {})
+
+
+def clarify_message(state: Mapping[str, Any]) -> AIMessage:
+    slot = state.get("pending_slot") or next_slot(state)
+    if slot == CONFIRM:
+        return AIMessage("I'm checking these are the details you want me to assess. Reply Yes if they're right, "
+                         "or tell me what to change.", response_metadata={"options": ["Yes", "No"]})
+    question = question_message(state, prefix="", slot=slot)
+    return AIMessage(f"{EXPLANATIONS[slot]}\n\n{question.content}", response_metadata=question.response_metadata)
 
 
 def field_for(text: str) -> str | None:

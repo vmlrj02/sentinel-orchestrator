@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, Remove
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Command
 
-from .agent.dialogue import CHANGE_OPTIONS, field_for, next_slot, question_message
+from .agent.dialogue import CHANGE_OPTIONS, clarify_message, field_for, next_slot, question_message
 from .agent.graph import RESUME_OPTIONS
 from .agent.state import FIELD_LABELS, REQUIRED_FIELDS, SUMMARY_LABELS, application_fields
 from .commands import match_command
@@ -359,7 +359,9 @@ class ChatService:
             reply = question_message({}, prefix="Okay, let's start again.")
             await self._clear(config, keep=[HumanMessage(text), reply])
             return reply
-        if name == "help":
+        if name == "clarify":
+            reply = clarify_message(values)
+        elif name == "help":
             reply = AIMessage(
                 f"I can help you apply for a personal loan with {lender} in a few short questions, and answer "
                 f"questions about {lender}'s loan policies. You can say \"start over\", \"what do you have so "

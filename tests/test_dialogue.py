@@ -114,3 +114,14 @@ async def test_funnel_and_slot_metrics(service):
     assert delta("funnel", "confirmed") == 1
     assert delta("slots", "person_home_ownership", "filled_fast") == 1
     assert delta("slots", "person_age", "filled_llm") == 1
+
+
+@pytest.mark.parametrize("text", ["what?", "what do you even mean? rent what?", "I don't understand", "huh",
+                                  "what do you mean"])
+async def test_clarification_explains_the_current_question(service, fake_llm, text):
+    await service.run_turn(f"cl{len(text)}", "u", START, "t")  # asked: home
+    calls = fake_llm.calls
+    result = await service.run_turn(f"cl{len(text)}", "u", text, "t")
+    assert result.messages[-1].startswith("This is about where you live")
+    assert "Please reply with one of: Rent, Own, Mortgage or Other." in result.messages[-1]
+    assert fake_llm.calls == calls
