@@ -17,11 +17,34 @@ _NUMBER = re.compile(
     r"(k|thousand|mn|m|million|lakhs?|lacs?|crores?|%|percent|years?|yrs?)?\s*\.?\s*", re.I)
 
 
+_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen".split())}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+         "eighty": 80, "ninety": 90, "ninty": 90}
+_WORDS = re.compile(r"\s*(?P<tens>[a-z]+)?(?:[\s-]+(?P<unit>[a-z]+|\d))?\s*(?:years?( old)?|yrs?)?\s*\.?\s*", re.I)
+
+
+def parse_number_words(text: str) -> float | None:
+    """0-99 in words, including common spellings people type: "forty", "fourty", "fifty 1", "twenty-five"."""
+    match = _WORDS.fullmatch(text.lower())
+    if not match or not match.group("tens"):
+        return None
+    tens, unit = match.group("tens"), match.group("unit")
+    if unit is None:
+        return float(_TENS.get(tens, _UNITS.get(tens, -1))) if (tens in _TENS or tens in _UNITS) else None
+    unit_value = int(unit) if unit.isdigit() else _UNITS.get(unit)
+    if tens in _TENS and unit_value is not None and 0 < unit_value < 10:
+        return float(_TENS[tens] + unit_value)
+    return None
+
+
 def parse_number(text: str) -> float | None:
-    """The whole message is one number, optionally with a unit: "12k", "12,000", "11.5%", "8 lakhs"."""
+    """The whole message is one number, optionally with a unit: "12k", "12,000", "11.5%", "8 lakhs",
+    or a number in words up to 99 ("fifty 1")."""
     match = _NUMBER.fullmatch(text)
     if not match:
-        return None
+        return parse_number_words(text)
     value = float(match.group(1).replace(",", ""))
     return value * _MULTIPLIERS.get((match.group(2) or "").lower(), 1)
 

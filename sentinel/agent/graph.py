@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -30,16 +31,15 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Checkpointer, interrupt
 
-from ..metrics import INVALID_CITATIONS, record_decision
+from ..metrics import INVALID_CITATIONS, record_decision, record_funnel, record_slot
 from ..prompts import load_prompt, prompt_versions
 from ..rag import Retriever
 from ..scoring.model import Scorer, get_credit_model
 from ..store import ApplicationRecord, ApplicationStore, now
 from ..tenants import get_tenant, max_approvable_loan
+from .dialogue import CHANGE_OPTIONS, CONFIRM, ESCAPES, next_slot, question_message, understand
 from .llm import AgentLLM
 from .state import (
-    CHOICE_QUESTIONS,
-    CHOICES,
     FIELD_LABELS,
     REQUIRED_FIELDS,
     SUMMARY_LABELS,
@@ -96,7 +96,7 @@ def route_after_advisor(state: AgentState) -> str:
     return "tools" if isinstance(last, AIMessage) and last.tool_calls else END
 
 
-def summary_message(state: dict[str, Any]) -> str:
+def summary_message(state: Mapping[str, Any]) -> str:
     lines = [f"- {SUMMARY_LABELS[f]}: {_fmt(state[f])}" for f in REQUIRED_FIELDS]
     return (
         "Here's your application:\n" + "\n".join(lines)
@@ -114,26 +114,6 @@ def _fmt(value: Any) -> str:
         return named[value]
     # Enum values (RENT, MEDICAL) read better capitalised; free text like names stays as typed
     return str(value).capitalize() if str(value).isupper() else str(value)
-
-
-def with_choices(text: str, state: dict[str, Any], ask_in_code: bool = False) -> AIMessage:
-    """Reply asking for the next detail. If that detail has fixed answers, say so explicitly and attach
-    them as quick replies, in code, so it never depends on the LLM remembering to list them.
-
-    ask_in_code: replace the LLM's question with a fixed one for choice fields, so the question and
-    its options can never disagree (the LLM may want a detail the code already considers collected)."""
-    missing = missing_fields(state)
-    if not missing:
-        options = ["Yes", "No"]  # the confirmation summary
-    elif missing[0] in CHOICES:
-        options = CHOICES[missing[0]]
-        if ask_in_code:
-            text = f"Thanks. {CHOICE_QUESTIONS[missing[0]]}"
-        listed = ", ".join(options[:-1]) + f" or {options[-1]}"
-        text = f"{text.rstrip()}\n\nPlease reply with one of: {listed}."
-    else:
-        options = []
-    return AIMessage(text, response_metadata={"options": options} if options else {})
 
 
 def _recent(messages: list[BaseMessage], limit: int) -> list[BaseMessage]:
@@ -155,6 +135,8 @@ def _dialogue(messages: list[BaseMessage]) -> list[BaseMessage]:
 _PLAIN_YES = re.compile(
     r"^\s*(yes|yep|yeah|yup|y|correct|confirm(ed)?|that'?s (right|correct)|all (good|correct)|looks (good|right))"
     r"([\s,.!]+(it is|that'?s (right|correct|all)|all correct|correct|thanks?|please|now))*[\s.!]*$", re.I)
+
+_PLAIN_NO = re.compile(r"^\s*(no|nope|nah|not quite|not correct|incorrect|wrong)\b[\s,.!]*$", re.I)
 
 _CITATION = re.compile(r"\s?\[([a-z0-9_-]+/[a-z0-9_.-]+(?:#[a-z0-9-]+)?)\]")
 
@@ -191,65 +173,101 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
     policy_tools = [t for t in tools if t.name == "search_policy"]
 
     async def interviewer(state: AgentState) -> dict[str, Any]:
-        """Extracts fields from the latest message and asks for the next one."""
-        missing = missing_fields(state)
-        collected = application_fields(state)
-        system = interviewer_prompt.render(
-            collected=json.dumps(collected) if collected else "nothing yet",
-            missing=str([f"{f} ({FIELD_LABELS[f]})" for f in missing]),
-        )
-        result = await llm.interview([SystemMessage(system), *_dialogue(_recent(state["messages"],
-                                                                                  INTERVIEWER_WINDOW))])
+        """Fills the pending slot from the latest message, then asks the next question.
 
-        # exclude_none so a turn that mentions nothing new doesn't wipe stored values
-        updates: dict[str, Any] = result.model_dump(exclude_none=True)
-        chat_text = updates.pop("assistant_message")
-        updates["applicant_question"] = result.applicant_question
-
-        # A bare number answers the question that was asked; ranges are checked against lender policy
+        Fast path first: short answers to the pending slot ("rent", "12k", "B", "no") are parsed in code
+        with no LLM call. Anything else goes to the LLM for understanding only; replies come from code.
+        """
+        text = str(state["messages"][-1].content)
         tenant = get_tenant(state.get("tenant_id"))
-        asked = missing[0] if missing else None
-        if (asked in NUMERIC_FIELDS and not any(f in updates for f in REQUIRED_FIELDS)
-                and not result.applicant_question and not result.out_of_scope):
-            number = parse_number(str(state["messages"][-1].content))
-            if number is not None:
-                updates[asked] = number
-        updates, range_error = validate(updates, tenant)
+        slot = state.get("pending_slot") or next_slot(state)
+        attempts = dict(state.get("slot_attempts") or {})
+        updates: dict[str, Any] = {}
+        question = out_of_scope = None
+        path = "filled_fast"
 
+        if slot == CONFIRM and _PLAIN_YES.match(text):
+            updates["details_confirmed"] = True
+            record_slot(CONFIRM, "filled_fast")
+        elif slot == CONFIRM and _PLAIN_NO.match(text):
+            record_slot(CONFIRM, "declined")
+            return {"pending_slot": CONFIRM, "messages": [AIMessage(
+                "No problem. What would you like to change? You can just tell me the right value.",
+                response_metadata={"options": CHANGE_OPTIONS})]}
+        elif (value := understand(slot, text)) is not None:
+            updates[slot] = value
+        else:
+            missing = missing_fields(state)
+            collected = application_fields(state)
+            system = interviewer_prompt.render(
+                collected=json.dumps(collected) if collected else "nothing yet",
+                missing=str([f"{f} ({FIELD_LABELS[f]})" for f in missing]),
+                asking=FIELD_LABELS.get(slot, "confirmation of the summary"),
+            )
+            path = "filled_llm"
+            result = await llm.interview([SystemMessage(system),
+                                          *_dialogue(_recent(state["messages"], INTERVIEWER_WINDOW))])
+            # exclude_none so a turn that mentions nothing new doesn't wipe stored values
+            updates = {k: v for k, v in result.model_dump(exclude_none=True).items()
+                       if k in REQUIRED_FIELDS or k == "details_confirmed"}
+            question, out_of_scope = result.applicant_question, result.out_of_scope
+            # A bare number the LLM didn't place answers the question that was asked
+            if slot in NUMERIC_FIELDS and not updates and not question and not out_of_scope:
+                if (number := parse_number(text)) is not None:
+                    updates[slot] = number
+
+        updates, range_error = validate(updates, tenant)
+        for field in updates:
+            if field in REQUIRED_FIELDS:
+                record_slot(field, path)
         income = updates.get("person_income") or state.get("person_income")
         loan = updates.get("loan_amnt") or state.get("loan_amnt")
         if income and loan and income > 0:
             updates["loan_percent_income"] = round(loan / income, 2)
 
         # A correction after the summary was shown needs a fresh confirmation
-        corrected = any(state.get(f) != updates[f] for f in REQUIRED_FIELDS if f in updates)
-        if not missing and corrected:
+        changed = any(state.get(f) != updates[f] for f in REQUIRED_FIELDS if f in updates)
+        if slot == CONFIRM and changed:
             updates["details_confirmed"] = False
-        elif not missing and _PLAIN_YES.match(str(state["messages"][-1].content)):
+        elif slot == CONFIRM and _PLAIN_YES.match(text):
             updates["details_confirmed"] = True
+        if updates.get("details_confirmed"):
+            record_funnel("confirmed")
 
         # Progress = a new or changed detail, a confirmation, or a real question. Turns without progress
         # are counted so the service can stop spending tokens on a conversation that is going nowhere.
-        changed = any(state.get(f) != updates[f] for f in REQUIRED_FIELDS if f in updates)
-        progress = changed or bool(result.applicant_question) or bool(updates.get("details_confirmed"))
+        progress = changed or bool(question) or bool(updates.get("details_confirmed"))
         updates["stalled_turns"] = 0 if progress else state.get("stalled_turns", 0) + 1
-        updates.pop("out_of_scope", None)
-        updates.pop("person_name", None)  # not collected: the decision doesn't use it
-
+        updates["applicant_question"] = question
         merged = {**state, **updates}
-        if range_error:
-            return {**updates, "messages": [AIMessage(range_error)]}
-        if result.out_of_scope and not progress:
-            return {**updates, "messages": [out_of_scope_message(get_tenant(state.get("tenant_id")).name)]}
+        updates["deferred"] = [f for f in (state.get("deferred") or []) if merged.get(f) is None]
+        merged["deferred"] = updates["deferred"]
+
+        if range_error or (not progress and not out_of_scope):
+            # The answer didn't fit: re-ask with what's expected, and after two misses offer a way out
+            attempts[slot] = attempts.get(slot, 0) + 1
+            record_slot(slot, "invalid" if range_error else "reask")
+            updates["slot_attempts"] = attempts
+            updates["pending_slot"] = next_slot(merged)
+            if range_error:
+                options = ESCAPES if attempts[slot] >= 2 else []
+                message = AIMessage(range_error, response_metadata={"options": options} if options else {})
+            else:
+                message = question_message(merged, attempt=attempts[slot])
+            return {**updates, "messages": [message]}
+        if out_of_scope and not progress:
+            return {**updates, "messages": [out_of_scope_message(tenant.name)]}
+
+        updates["slot_attempts"] = {k: v for k, v in attempts.items() if merged.get(k) is None}
+        updates["pending_slot"] = next_slot(merged)
         if ready_for_scoring(merged):
             get_stream_writer()({"type": "status", "text": "Scoring your application..."})
             return updates  # the advisor's explanation is this turn's reply
-        if result.applicant_question:
-            return updates  # the advisor answers, then asks for the next detail
-        # The summary is built here, not by the LLM, so the user always sees exactly what will be scored
-        if not missing_fields(merged):
-            chat_text = summary_message(merged)
-        return {**updates, "messages": [with_choices(chat_text, merged, ask_in_code=True)]}
+        if question:
+            return updates  # the advisor answers, then the next question is appended
+        if updates["pending_slot"] == CONFIRM and slot != CONFIRM:
+            record_funnel("summary_shown")
+        return {**updates, "messages": [question_message(merged)]}
 
     async def scoring(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         """Scores the confirmed application, applies the lender's policy, and records the decision."""
@@ -322,11 +340,9 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
                        else "This turn: answer the applicant's latest message.")
             available = tools
         else:
-            missing = missing_fields(state)
             situation = "The application is still being collected. Nothing has been decided or scored."
-            closing = (f"After answering, continue the application with one short, natural question asking for "
-                       f"their {FIELD_LABELS[missing[0]]}." if missing
-                       else "After answering, ask them to confirm the application summary above (Yes/No).")
+            closing = ("Answer the question only, in two or three sentences. Do not ask for application details: "
+                       "the app asks the next question after your answer.")
             available = policy_tools
         if _tool_rounds_this_turn(state["messages"]) >= MAX_TOOL_ROUNDS:
             available = []  # step limit: answer with what has been gathered
@@ -347,7 +363,10 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             for call in message.tool_calls:
                 writer({"type": "tool_call", "name": call["name"], "args": call["args"]})
         if not final and isinstance(message, AIMessage) and not message.tool_calls:
-            message = with_choices(str(message.content), dict(state))  # it ends by asking for the next detail
+            # Back to the application: the dialogue manager appends the next question and its options
+            follow_up = question_message(dict(state), prefix="")
+            message = AIMessage(f"{message.content}\n\n{follow_up.content}",
+                                response_metadata=follow_up.response_metadata)
         updates: dict[str, Any] = {"messages": [message], "applicant_question": None}
         if final and final.get("explain") and not getattr(message, "tool_calls", None):
             updates["final_decision"] = {**final, "explain": False}

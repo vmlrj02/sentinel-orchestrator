@@ -139,3 +139,16 @@ async def test_full_review_flow_on_dynamodb_backend(aws, settings):
         assert decided.explained
         state = await rt.service.get_state("c")
         assert state["status"] == "decided" and state["final_decision"]["decided_by"] == "underwriter:maya"
+
+
+def test_cloudwatch_snapshot_includes_funnel_and_slots(aws):
+    from sentinel.aws import CloudWatchMetrics
+    cw = boto3.client("cloudwatch", region_name=REGION)
+    cw.put_metric_data(Namespace="Sentinel", MetricData=[
+        {"MetricName": "Funnel", "Dimensions": [{"Name": "Stage", "Value": "started"}], "Value": 3},
+        {"MetricName": "SlotEvents", "Dimensions": [{"Name": "Slot", "Value": "loan_amnt"},
+                                                   {"Name": "Event", "Value": "reask"}], "Value": 2},
+    ])
+    snapshot = CloudWatchMetrics().snapshot()
+    assert snapshot["funnel"]["started"] == 3
+    assert snapshot["slots"]["loan_amnt"]["reask"] == 2

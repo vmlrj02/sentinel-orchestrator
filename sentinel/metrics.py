@@ -20,6 +20,9 @@ IN_FLIGHT = Gauge("sentinel_turns_in_flight", "Chat turns currently running")
 RATE_LIMITED = Counter("sentinel_rate_limited_total", "Turns rejected by the per-user rate limit", ["channel"])
 DECISIONS = Counter("sentinel_decisions_total", "Credit decisions made", ["decision"])
 INVALID_CITATIONS = Counter("sentinel_invalid_citations_total", "Citations removed because they were not retrieved")
+FUNNEL = Counter("sentinel_funnel_total", "Conversations reaching each stage", ["stage"])
+SLOT_EVENTS = Counter("sentinel_slot_events_total", "Per-question outcomes", ["slot", "event"])
+COMMANDS = Counter("sentinel_commands_total", "Global commands used", ["command"])
 FEEDBACK = Counter("sentinel_feedback_total", "User feedback on replies", ["rating"])
 
 LLM_CALLS = Counter("sentinel_llm_calls_total", "LLM calls", ["model", "outcome"])
@@ -50,6 +53,23 @@ def record_turn(channel: str, outcome: str, seconds: float) -> None:
     TURNS.labels(channel, outcome).inc()
     TURN_LATENCY.labels(channel).observe(seconds)
     _emf({"Turns": (1, "Count"), "TurnLatency": (round(seconds * 1000), "Milliseconds")}, {"Outcome": outcome})
+
+
+def record_funnel(stage: str) -> None:
+    """started -> summary_shown -> confirmed -> decided (decisions are recorded separately)."""
+    FUNNEL.labels(stage).inc()
+    _emf({"Funnel": (1, "Count")}, {"Stage": stage})
+
+
+def record_slot(slot: str, event: str) -> None:
+    """filled_fast (parsed in code), filled_llm, reask, invalid, declined, skipped."""
+    SLOT_EVENTS.labels(slot, event).inc()
+    _emf({"SlotEvents": (1, "Count")}, {"Slot": slot, "Event": event})
+
+
+def record_command(command: str) -> None:
+    COMMANDS.labels(command).inc()
+    _emf({"Commands": (1, "Count")}, {"Command": command})
 
 
 def record_decision(decision: str) -> None:
@@ -115,6 +135,9 @@ def snapshot() -> dict[str, Any]:
     decisions: dict[str, float] = {}
     tokens: dict[str, float] = {}
     feedback: dict[str, float] = {}
+    funnel: dict[str, float] = {}
+    slots: dict[str, dict[str, float]] = {}
+    commands: dict[str, float] = {}
     llm_errors = llm_calls = in_flight = rate_limited = 0.0
     latency: dict[float, float] = {}
     for metric in REGISTRY.collect():
@@ -137,6 +160,12 @@ def snapshot() -> dict[str, Any]:
                 rate_limited += s.value
             elif s.name == "sentinel_feedback_total":
                 feedback[s.labels["rating"]] = s.value
+            elif s.name == "sentinel_funnel_total":
+                funnel[s.labels["stage"]] = s.value
+            elif s.name == "sentinel_slot_events_total":
+                slots.setdefault(s.labels["slot"], {})[s.labels["event"]] = s.value
+            elif s.name == "sentinel_commands_total":
+                commands[s.labels["command"]] = s.value
     buckets = sorted(latency.items())
     total_turns = sum(turns.values())
     return {
@@ -148,4 +177,7 @@ def snapshot() -> dict[str, Any]:
                 "tokens_per_turn": round(sum(tokens.values()) / total_turns) if total_turns else None},
         "decisions": decisions,
         "feedback": feedback,
+        "funnel": funnel,
+        "slots": slots,
+        "commands": commands,
     }

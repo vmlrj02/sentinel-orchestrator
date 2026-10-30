@@ -76,8 +76,8 @@ def test_plain_yes_patterns():
 
 async def test_choice_questions_list_their_options(service):
     from sentinel.agent.state import CHOICES
-    await service.run_turn("o", "u", "person_name=Ann person_age=30 person_income=50000 person_emp_length=3", "t")
-    events = [e async for e in service.stream_turn("o", "u", "hello", "t")]
+    events = [e async for e in service.stream_turn("o", "u", "person_age=30 person_income=50000 person_emp_length=3",
+                                                   "t")]
     message = next(e for e in events if e["type"] == "message")
     assert message["options"] == CHOICES["person_home_ownership"]
     assert message["text"] == ("Thanks. Do you rent or own your home?\n\n"
@@ -95,10 +95,12 @@ async def test_free_text_questions_have_no_options(service):
 def test_parse_number():
     from sentinel.agent.validation import parse_number
     cases = {"1": 1, "12k": 12_000, "12,000": 12_000, "11.5%": 11.5, "8 lakhs": 800_000, "$5000": 5_000,
-             "4 years": 4, "-10000": -10_000, "₹ 2.5 lakh": 250_000}
+             "4 years": 4, "-10000": -10_000, "₹ 2.5 lakh": 250_000, "fourty": 40, "fifty 1": 51,
+             "twenty-five": 25, "forty five years": 45, "seven": 7, "Ninety nine": 99}
     for text, expected in cases.items():
         assert parse_number(text) == expected, text
-    for text in ["idk", "how much ever you can give", "12 or 13", "age 30 and income 5000"]:
+    for text in ["idk", "how much ever you can give", "12 or 13", "age 30 and income 5000", "hey", "vaa muthu",
+                 "fifty fifty"]:
         assert parse_number(text) is None, text
 
 

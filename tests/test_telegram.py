@@ -44,3 +44,10 @@ async def test_explanation_gets_feedback_buttons(service):
 
     await adapter.handle_update({"update_id": 99, "callback_query": {"id": "q", "data": buttons[1]["callback_data"]}})
     assert sent[-1][0] == "answerCallbackQuery"
+
+
+async def test_answer_options_become_a_tap_keyboard(service):
+    adapter, sent = make_adapter(service)
+    await adapter.handle_update(update(1, "person_age=30 person_income=50000 person_emp_length=3"))
+    keyboard = [p for m, p in sent if m == "sendMessage"][-1]["reply_markup"]["keyboard"]
+    assert [b["text"] for row in keyboard for b in row] == ["Rent", "Own", "Mortgage", "Other"]

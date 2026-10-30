@@ -28,6 +28,12 @@ from .store import ApplicationRecord, Status
 
 logger = logging.getLogger(__name__)
 NAMESPACE = "Sentinel"
+FUNNEL_STAGES = ["started", "summary_shown", "confirmed", "handoff_requested"]
+SLOT_EVENTS = ["filled_fast", "filled_llm", "reask", "invalid", "skipped", "declined"]
+COMMAND_NAMES = ["start_over", "help", "summary", "human", "skip", "apply", "change", "sensitive_data_removed"]
+SLOTS = ["person_age", "person_income", "person_emp_length", "person_home_ownership", "loan_amnt",
+         "loan_int_rate", "loan_intent", "loan_grade", "cb_person_cred_hist_length", "cb_person_default_on_file",
+         "confirm"]
 
 
 def load_secrets() -> None:
@@ -145,7 +151,7 @@ class CloudWatchMetrics:
     def snapshot(self, hours: int = 24) -> dict[str, Any]:
         if self._cached and time.monotonic() - self._cached[0] < self._ttl_s:
             return self._cached[1]
-        end = datetime.now(UTC)
+        end = datetime.now(UTC) + timedelta(minutes=1)  # end is exclusive: include the latest points
         period = hours * 3600
 
         def q(qid: str, name: str, stat: str, dims: dict[str, str] | None = None) -> dict[str, Any]:
@@ -163,6 +169,10 @@ class CloudWatchMetrics:
             *(q(f"d_{d}", "Decisions", "Sum", {"Decision": d})
               for d in ("approved", "declined", "referred", "underwriter_approved", "underwriter_declined")),
             q("fb_up", "Feedback", "Sum", {"Rating": "up"}), q("fb_down", "Feedback", "Sum", {"Rating": "down"}),
+            *(q(f"f_{s}", "Funnel", "Sum", {"Stage": s}) for s in FUNNEL_STAGES),
+            *(q(f"c_{c}", "Commands", "Sum", {"Command": c}) for c in COMMAND_NAMES),
+            *(q(f"s_{i}_{e}", "SlotEvents", "Sum", {"Slot": slot, "Event": e})
+              for i, slot in enumerate(SLOTS) for e in SLOT_EVENTS),
         ]
         response = self._cw.get_metric_data(MetricDataQueries=queries, StartTime=end - timedelta(hours=hours),
                                             EndTime=end, ScanBy="TimestampDescending")
@@ -178,6 +188,10 @@ class CloudWatchMetrics:
                     "tokens_per_turn": round(v["tokens"] / total) if total else None},
             "decisions": {k[2:]: n for k, n in v.items() if k.startswith("d_") and n},
             "feedback": {"up": v["fb_up"], "down": v["fb_down"]},
+            "funnel": {s: v[f"f_{s}"] for s in FUNNEL_STAGES if v[f"f_{s}"]},
+            "commands": {c: v[f"c_{c}"] for c in COMMAND_NAMES if v[f"c_{c}"]},
+            "slots": {slot: {e: v[f"s_{i}_{e}"] for e in SLOT_EVENTS if v[f"s_{i}_{e}"]}
+                      for i, slot in enumerate(SLOTS) if any(v[f"s_{i}_{e}"] for e in SLOT_EVENTS)},
         }
         self._cached = (time.monotonic(), snapshot)
         return snapshot

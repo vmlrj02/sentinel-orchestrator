@@ -99,7 +99,10 @@ async def test_stalled_conversation_stops_calling_the_llm(service, fake_llm):
     assert fake_llm.calls == calls  # zero tokens spent on the stalled turns
 
     resumed = await service.run_turn("stall", "u", "Apply for a loan", "test")  # a button resumes the chat
-    assert fake_llm.calls == calls + 1 and "isn't what you need" not in resumed.messages[-1]
+    assert fake_llm.calls == calls  # resuming is a command: answered in code
+    assert resumed.messages[-1].startswith("Great, let's get started.")
+    await service.run_turn("stall", "u", "person_age=30", "test")
+    assert fake_llm.calls == calls + 1  # and the conversation runs normally again
 
 
 async def test_progress_resets_the_stall_counter(service, fake_llm):

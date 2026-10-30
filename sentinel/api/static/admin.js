@@ -129,6 +129,35 @@ async function loadSystem() {
     stat("Feedback", `${s.feedback.up || 0} 👍 ${s.feedback.down || 0} 👎`, "scored on the Langfuse trace"),
     stat("Rate limited", s.rate_limited, "per-user sliding window"),
   );
+  renderFunnel(s);
+}
+
+const QUESTION_LABELS = { ...FIELD_LABELS, confirm: "Confirm summary" };
+
+function renderFunnel(s) {
+  const decided = ["approved", "declined", "referred"].reduce((n, k) => n + (s.decisions?.[k] || 0), 0);
+  const stages = [["Started", s.funnel?.started || 0], ["Saw the summary", s.funnel?.summary_shown || 0],
+                  ["Confirmed", s.funnel?.confirmed || 0], ["Got a decision", decided]];
+  const top = Math.max(stages[0][1], 1);
+  const rows = Object.entries(s.slots || {}).map(([slot, e]) => {
+    const filled = (e.filled_fast || 0) + (e.filled_llm || 0);
+    return el("tr", {},
+      el("td", {}, QUESTION_LABELS[slot] || slot), el("td", {}, filled),
+      el("td", {}, filled ? pct((e.filled_fast || 0) / filled) : "—"),
+      el("td", {}, e.reask || 0), el("td", {}, e.invalid || 0), el("td", {}, e.skipped || 0));
+  });
+  const commands = Object.entries(s.commands || {}).map(([c, n]) => `${c.replaceAll("_", " ")} ${n}`).join(" · ");
+  $("#funnel").replaceChildren(
+    el("div", { class: "funnel" }, stages.map(([label, n], i) => el("div", { class: "funnel-row" },
+      el("span", { class: "funnel-label" }, label),
+      el("span", { class: "funnel-bar", style: `width:${Math.max(2, (n / top) * 100)}%` }),
+      el("span", { class: "funnel-n" }, `${n}${i ? ` (${pct(n / top)})` : ""}`)))),
+    el("div", { class: "table-wrap" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["Question", "Answered", "Understood in code", "Re-asked", "Invalid", "Skipped"]
+        .map((h) => el("th", {}, h)))),
+      el("tbody", {}, rows.length ? rows : [el("tr", {}, el("td", { colspan: 6, class: "muted" }, "No answers yet."))]))),
+    el("p", { class: "muted small" }, `Commands used: ${commands || "none yet"}${s.window ? ` · ${s.window}` : ""}`),
+  );
 }
 
 async function loadEvals() {

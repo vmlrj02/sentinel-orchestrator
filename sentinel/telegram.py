@@ -71,7 +71,8 @@ class TelegramAdapter:
         for i, reply in enumerate(result.messages):
             # Thumbs up/down under the analyst's answers; the rating is scored on that turn's trace
             is_last = i == len(result.messages) - 1
-            await self.send(chat_id, reply, feedback_for=result.trace_id if is_last and result.explained else None)
+            await self.send(chat_id, reply, feedback_for=result.trace_id if is_last and result.explained else None,
+                            options=result.options if is_last else None)
 
     async def _notify(self, conversation_id: str, messages: list[str]) -> None:
         """Underwriter decided: push the advisor's explanation to the applicant's chat."""
@@ -81,9 +82,15 @@ class TelegramAdapter:
         for text in messages:
             await self.send(chat_id, text)
 
-    async def send(self, chat_id: int, text: str, feedback_for: str | None = None) -> None:
+    async def send(self, chat_id: int, text: str, feedback_for: str | None = None,
+                   options: list[str] | None = None) -> None:
         params: dict[str, Any] = {"chat_id": chat_id, "text": text[:4096]}
-        if feedback_for:
+        if options:
+            # Quick replies as a one-tap keyboard; tapping sends the option as a normal message
+            params["reply_markup"] = {"keyboard": [[{"text": o} for o in options[i:i + 3]]
+                                                   for i in range(0, len(options), 3)],
+                                      "one_time_keyboard": True, "resize_keyboard": True}
+        elif feedback_for:
             params["reply_markup"] = {"inline_keyboard": [[
                 {"text": "👍 Helpful", "callback_data": f"fb:{feedback_for}:1"},
                 {"text": "👎 Not helpful", "callback_data": f"fb:{feedback_for}:-1"},

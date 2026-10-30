@@ -15,16 +15,28 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Command
 
+from .agent.dialogue import CHANGE_OPTIONS, field_for, next_slot, question_message
 from .agent.graph import RESUME_OPTIONS
-from .agent.state import REQUIRED_FIELDS, application_fields
+from .agent.state import FIELD_LABELS, REQUIRED_FIELDS, SUMMARY_LABELS, application_fields
+from .commands import match_command
 from .config import Settings
+from .guard import only_removed, redact
 from .locks import ConversationLocks, InProcessLocks
 from .logging_setup import channel_var, conversation_id_var, trace_id_var
-from .metrics import IN_FLIGHT, QUEUE_WAIT, RATE_LIMITED, record_feedback, record_turn
+from .metrics import (
+    IN_FLIGHT,
+    QUEUE_WAIT,
+    RATE_LIMITED,
+    record_command,
+    record_feedback,
+    record_funnel,
+    record_slot,
+    record_turn,
+)
 from .observability import Tracer
 from .prompts import prompt_versions
 from .store import ApplicationRecord, ApplicationStore
@@ -92,6 +104,7 @@ class TurnResult:
     tools: list[str] = field(default_factory=list)
     citations: list[str] = field(default_factory=list)
     what_if: list[dict[str, Any]] = field(default_factory=list)
+    options: list[str] = field(default_factory=list)  # quick replies offered with the last message
 
 
 class ChatService:
@@ -156,11 +169,28 @@ class ChatService:
                 values = snapshot.values or {}
                 lender = get_tenant(values.get("tenant_id") or tenant_id).name
                 turns = sum(isinstance(m, HumanMessage) for m in values.get("messages", []))
-                if snapshot.interrupts:
+                if turns == 0:
+                    record_funnel("started")
+                # Card, account and ID numbers are removed before the LLM, traces or logs see them
+                text, removed = redact(text)
+                if removed:
+                    record_command("sensitive_data_removed")
+                    yield {"type": "message", "node": "service", "text": (
+                        "For your safety, please don't share card, bank account or ID numbers here. "
+                        "I've removed that from your message and won't store it.")}
+                command = match_command(text) if not only_removed(text) else None
+                if only_removed(text):
+                    outcome = "sensitive_data"
+                elif snapshot.interrupts:
                     outcome = "under_review"
                     yield {"type": "message", "node": "service", "text": (
                         "Your application is with an underwriter right now. I'll message you here as soon as "
                         "they decide.")}
+                elif command:
+                    outcome = f"command_{command[0]}"
+                    reply = await self._command(command[0], command[1], text, config, values, lender)
+                    yield {"type": "message", "node": "service", "text": reply.content,
+                           "options": reply.response_metadata.get("options", [])}
                 elif turns >= self.settings.max_turns_per_conversation:
                     # Cost ceiling: no LLM call once a conversation hits the limit
                     outcome = "turn_limit"
@@ -303,17 +333,75 @@ class ChatService:
     async def reset(self, conversation_id: str) -> None:
         """Start a fresh application in the same conversation (Telegram /start)."""
         config = {"configurable": {"thread_id": conversation_id}}
-        cleared: dict[str, Any] = {f: None for f in [*REQUIRED_FIELDS, "loan_percent_income", "assessment",
-                                                     "final_decision", "application_id", "applicant_question"]}
-        cleared["stalled_turns"] = 0
         async with self.locks.hold(conversation_id):
             snapshot = await self.graph.aget_state(config)
             if snapshot.interrupts:
                 raise ReviewError("This application is with an underwriter and can't be restarted yet.")
-            await self.graph.aupdate_state(
-                config, {**cleared, "details_confirmed": False, "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]},
-                as_node="interviewer",
-            )
+            await self._clear(config)
+
+    async def _clear(self, config: dict[str, Any], keep: list[BaseMessage] | None = None) -> None:
+        cleared: dict[str, Any] = {f: None for f in [*REQUIRED_FIELDS, "loan_percent_income", "assessment",
+                                                     "final_decision", "application_id", "applicant_question",
+                                                     "pending_slot"]}
+        await self.graph.aupdate_state(
+            config, {**cleared, "details_confirmed": False, "stalled_turns": 0, "slot_attempts": {}, "deferred": [],
+                     "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *(keep or [])]},
+            as_node="interviewer",
+        )
+
+    async def _command(self, name: str, what: str, text: str, config: dict[str, Any],
+                       values: dict[str, Any], lender: str) -> AIMessage:
+        """Global commands: answered in code (no LLM) and saved to the conversation like any other turn."""
+        record_command(name)
+        updates: dict[str, Any] = {}
+        decided = bool(values.get("final_decision"))
+        if name == "start_over":
+            reply = question_message({}, prefix="Okay, let's start again.")
+            await self._clear(config, keep=[HumanMessage(text), reply])
+            return reply
+        if name == "help":
+            reply = AIMessage(
+                f"I can help you apply for a personal loan with {lender} in a few short questions, and answer "
+                f"questions about {lender}'s loan policies. You can say \"start over\", \"what do you have so "
+                f"far?\", \"change my income\" or \"skip\" at any time.",
+                response_metadata={"options": ["Apply for a loan", "What documents do I need?"]})
+        elif name == "summary":
+            collected = application_fields(values)
+            lines = [f"- {SUMMARY_LABELS[f]}: {v}" for f, v in collected.items() if f in SUMMARY_LABELS]
+            missing = [FIELD_LABELS[f] for f in REQUIRED_FIELDS if values.get(f) is None]
+            reply = AIMessage(
+                ("Here's what I have so far:\n" + "\n".join(lines) if lines else "I don't have any details yet.")
+                + (f"\n\nStill needed: {', '.join(missing)}." if missing else ""))
+        elif name == "human":
+            record_funnel("handoff_requested")
+            reply = AIMessage(
+                f"I can't connect you to a person from this chat yet. You can contact {lender}'s loan team "
+                "directly, or carry on here and I'll do my best to help.",
+                response_metadata={"options": ["Apply for a loan", "What documents do I need?"]})
+        elif decided and name in ("skip", "change", "apply"):
+            reply = AIMessage("Your application has already been decided. Tap Start over to begin a new one.",
+                              response_metadata={"options": ["Start over"]})
+        elif name == "skip":
+            slot = values.get("pending_slot")
+            if slot in REQUIRED_FIELDS:
+                record_slot(slot, "skipped")
+                updates["deferred"] = [*(values.get("deferred") or []), slot]
+            merged = {**values, **updates}
+            updates["pending_slot"] = next_slot(merged)
+            reply = question_message(merged, prefix="No problem, we'll come back to that.")
+        elif name == "change":
+            field = field_for(what)
+            if field is None:
+                reply = AIMessage("What would you like to change?", response_metadata={"options": CHANGE_OPTIONS})
+            else:
+                updates.update({field: None, "details_confirmed": False, "pending_slot": field})
+                reply = question_message({**values, **updates}, prefix="Sure.", slot=field)
+        else:  # apply
+            updates.update({"stalled_turns": 0})
+            reply = question_message({**values, **updates}, prefix="Great, let's get started.")
+        await self.graph.aupdate_state(config, {**updates, "messages": [HumanMessage(text), reply]},
+                                       as_node="interviewer")
+        return reply
 
     def record_feedback(self, trace_id: str, rating: int, comment: str | None = None) -> None:
         record_feedback(rating)
@@ -327,6 +415,7 @@ async def _collect(conversation_id: str, events: AsyncIterator[Event]) -> TurnRe
         if kind == "message":
             result.messages.append(event["text"])
             result.explained = event.get("node") == "advisor"
+            result.options = event.get("options") or []
         elif kind == "assessment":
             result.assessment = event
         elif kind == "tool_call":

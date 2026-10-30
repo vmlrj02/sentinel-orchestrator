@@ -77,6 +77,9 @@ class AgentState(TypedDict, total=False):
     details_confirmed: bool
     applicant_question: Optional[str]      # policy question the interviewer routed to the advisor
     stalled_turns: int                     # consecutive turns with no progress (cost guard)
+    pending_slot: Optional[str]            # the detail the last question asked for ("confirm" at the summary)
+    slot_attempts: dict[str, int]          # failed answers per slot, for repair and escalation
+    deferred: list[str]                    # slots the applicant chose to skip for now (asked last)
     application_id: Optional[str]
     assessment: Optional[dict[str, Any]]   # {"model": credit model output, "policy_decision", "policy_reason"}
     final_decision: Optional[dict[str, Any]]  # {"decision", "decided_by", "note"}
@@ -84,8 +87,7 @@ class AgentState(TypedDict, total=False):
 
 
 class SentinelResponse(BaseModel):
-    """Extraction and response schema: the chat reply plus any fields the user just gave."""
-    assistant_message: str = Field(description="The conversational chat response to the user.")
+    """What the applicant's latest message says. The reply itself is written by code, not the LLM."""
     person_name: Optional[str] = None
     person_age: Optional[int] = Field(None, description="Age in years")
     person_income: Optional[float] = Field(None, description="Annual income")

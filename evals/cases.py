@@ -142,6 +142,28 @@ CASES = [
         "5 years credit history, never defaulted", "yes"],
         expect_tool="search_policy", expect_citation="kestrel/01-lending-policy#who-can-apply"),
 
+    # --- Regressions from live conversations (30 Oct 2026): each one broke once, so it is tested forever ---
+    Case("bug-bare-numbers", "regression", "aster", {**PRIYA, "loan_amnt": 5000, "loan_int_rate": 1}, [
+        "I'm 29, I earn 55k a year, 4 years at my job and I rent",
+        "1",            # loan amount of 1 was once accepted
+        "5000",
+        "1",            # a bare 1 for the rate was once never extracted
+        "for my master's", "B", "5", "never", "yes"],
+        forbidden=["What interest rate are you expecting?\n\nWhat interest rate"]),
+    Case("bug-eligibility-question", "regression", "aster", PRIYA, [
+        "I'm 29, earning 8 lakhs a year, 4 years at my job, renting",
+        "tell me how the eligibility is calculated",   # was refused as off-topic
+        "actually my income is 55000", "12000", "11.2", "education", "B", "5", "no", "yes"],
+        expect_tool="search_policy", forbidden=["I can only help with the application"]),
+    Case("bug-zero-income", "regression", "kestrel", MEI, [
+        "I'm 24", "0",          # zero income once looped on "What's your annual income?"
+        "38000", "1.5", "renting", "6000", "14", "debt consolidation", "C", "3", "no", "yes"],
+        forbidden=["should be between 1 and"]),
+    Case("bug-deposit-out-of-scope", "regression", "aster", PRIYA, [
+        "Hi", "I don't want a loan. I need to deposit cash",    # was answered with "what's your full name?"
+        "Apply for a loan", "29", "55000", "4", "rent", "12000", "11.2", "education", "B", "5", "never", "yes"],
+        forbidden=["full name"]),
+
     # --- Borderline: referred to a human underwriter ---
     Case("review-asha", "human_review", "aster", ASHA, [
         "Asha Rao, 29, earning 55000 a year, 4 years in my job, renting",

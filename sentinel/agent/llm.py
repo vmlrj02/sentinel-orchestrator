@@ -85,7 +85,7 @@ class FakeAgentLLM:
             fields["out_of_scope"] = True
         if "question:" in text:
             fields["applicant_question"] = text.split("question:", 1)[1].strip()
-        return SentinelResponse(assistant_message="Thanks. What else can you tell me?", **fields)
+        return SentinelResponse(**fields)
 
     async def advise(self, messages: list[BaseMessage], tools: Sequence[BaseTool]) -> AsyncIterator[AIMessageChunk]:
         self.calls += 1

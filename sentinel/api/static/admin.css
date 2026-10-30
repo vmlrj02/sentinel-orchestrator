@@ -35,3 +35,7 @@ tr:last-child td { border-bottom: 0; }
 .fields dt { color: var(--muted); }
 .fields dd { margin: 0; font-weight: 500; text-align: right; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.1rem; box-shadow: var(--shadow); }
+.funnel { display: grid; gap: .45rem; margin-bottom: 1rem; }
+.funnel-row { display: grid; grid-template-columns: 140px 1fr 110px; align-items: center; gap: .75rem; font-size: .88rem; }
+.funnel-bar { height: 14px; border-radius: 6px; background: var(--accent); justify-self: start; }
+.funnel-n { font-variant-numeric: tabular-nums; color: var(--muted); }
