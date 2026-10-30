@@ -1,8 +1,9 @@
 """Retrieval over each lender's policy documents.
 
-Hybrid search: BM25 catches exact terms ("origination fee", "Grade E"), embeddings catch meaning
-("can I pay it off early?"). Rankings are merged with reciprocal rank fusion. The tenant filter is
-applied before anything is scored, so one lender's documents can never reach another's applicants.
+Three strategies, selectable per deployment and compared by the retrieval eval: dense (embeddings,
+catch meaning: "can I pay it off early?"), BM25 (exact terms: "origination fee", "Grade E") and
+hybrid (weighted reciprocal rank fusion of both). The tenant filter is applied before anything is
+scored, so one lender's documents can never reach another lender's applicants.
 """
 import hashlib
 import json
@@ -13,7 +14,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
 INDEX_PATH = KNOWLEDGE_DIR / "index.json"
 EMBEDDING_MODEL = "text-embedding-3-small"
+# Retrieval strategy is chosen by the retrieval eval (evals/retrieval_cases.jsonl), not by habit:
+# on this corpus dense-only beats every BM25 fusion weight. See docs/decisions/003-retrieval.md
+BM25_WEIGHT = 0.3
+RetrievalMode = Literal["hybrid", "dense", "bm25"]
 
 
 @dataclass
@@ -124,9 +129,11 @@ class BM25:
 
 
 class Retriever:
-    def __init__(self, chunks: list[Chunk], embeddings: np.ndarray, embedder: Embedder) -> None:
+    def __init__(self, chunks: list[Chunk], embeddings: np.ndarray, embedder: Embedder,
+                 mode: RetrievalMode = "dense") -> None:
         self.chunks = chunks
         self.embedder = embedder
+        self.mode = mode
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         self.embeddings = embeddings / np.where(norms == 0, 1, norms)
         self._by_tenant: dict[str, list[int]] = {}
@@ -139,17 +146,22 @@ class Retriever:
         vector = self.embedder.embed([query])[0]
         return tuple(vector / (np.linalg.norm(vector) or 1))
 
-    def search(self, query: str, tenant_id: str, k: int = 4, rrf_k: int = 60) -> list[SearchResult]:
+    def search(self, query: str, tenant_id: str, k: int = 4, rrf_k: int = 60, bm25_weight: float = BM25_WEIGHT,
+               mode: RetrievalMode | None = None) -> list[SearchResult]:
+        mode = mode or self.mode
         indices = self._by_tenant.get(tenant_id, [])  # tenant filter first, always
         if not indices or not query.strip():
             return []
-        vector = np.array(self._embed_query(query.strip().lower()))
-        dense = self.embeddings[indices] @ vector
-        sparse = self._bm25[tenant_id].scores(query)
+        rankings: list[tuple[np.ndarray, float]] = []
+        if mode in ("hybrid", "dense"):
+            vector = np.array(self._embed_query(query.strip().lower()))
+            rankings.append((self.embeddings[indices] @ vector, 1.0))
+        if mode in ("hybrid", "bm25"):
+            rankings.append((self._bm25[tenant_id].scores(query), bm25_weight if mode == "hybrid" else 1.0))
         fused = np.zeros(len(indices))
-        for scores in (dense, sparse):
+        for scores, weight in rankings:
             for rank, pos in enumerate(np.argsort(-scores)):
-                fused[pos] += 1 / (rrf_k + rank + 1)
+                fused[pos] += weight / (rrf_k + rank + 1)
         top = np.argsort(-fused)[:k]
         return [SearchResult(self.chunks[indices[p]], round(float(fused[p]), 4)) for p in top]
 
@@ -165,14 +177,14 @@ def build_index(embedder: Embedder, path: Path = INDEX_PATH) -> None:
     logger.info("Built index", extra={"fields": {"chunks": len(chunks), "path": str(path)}})
 
 
-def load_retriever(embedder: Embedder, path: Path = INDEX_PATH) -> Retriever:
+def load_retriever(embedder: Embedder, path: Path = INDEX_PATH, mode: RetrievalMode = "dense") -> Retriever:
     chunks = load_chunks()
     if embedder.name == EMBEDDING_MODEL and path.exists():
         index = json.loads(path.read_text())
         if index["corpus_hash"] == corpus_hash(chunks) and index["embedding_model"] == embedder.name:
-            return Retriever(chunks, np.array(index["embeddings"], dtype=np.float32), embedder)
+            return Retriever(chunks, np.array(index["embeddings"], dtype=np.float32), embedder, mode)
         logger.warning("Policy index is stale; re-embedding documents (run `python -m sentinel.rag`)")
-    return Retriever(chunks, embedder.embed([c.text for c in chunks]), embedder)
+    return Retriever(chunks, embedder.embed([c.text for c in chunks]), embedder, mode)
 
 
 if __name__ == "__main__":

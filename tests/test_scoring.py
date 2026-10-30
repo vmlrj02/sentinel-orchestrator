@@ -20,7 +20,16 @@ def test_predict_returns_decision_and_explanations():
     result = get_credit_model().predict(APPLICANT)
     assert result["decision"] == ("declined" if result["prediction"] else "approved")
     assert 0 <= result["probability"] <= 1
-    assert len(result["explanations"]["top_risk_factors"]) == 2
+    assert 1 <= len(result["explanations"]["top_risk_factors"]) <= 3
+
+
+def test_explanations_name_the_applicants_own_values():
+    factors = get_credit_model().predict(APPLICANT)["explanations"]
+    named = {**factors["top_risk_factors"], **factors["top_strength_factors"]}
+    assert all("=" in name for name in named)
+    assert not any("loan_grade_" in name or "_RENT" in name for name in named)  # no raw one-hot columns
+    assert all(v > 0 for v in factors["top_risk_factors"].values())
+    assert all(v < 0 for v in factors["top_strength_factors"].values())
 
 
 def test_categoricals_change_the_score():

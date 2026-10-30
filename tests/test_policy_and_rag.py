@@ -30,13 +30,14 @@ def test_policy_thresholds_match_policy_documents():
 
 def test_retrieval_is_tenant_scoped():
     for tenant in ("aster", "kestrel"):
-        results = retriever().search("origination fee early repayment", tenant)
-        assert results and all(r.chunk.tenant_id == tenant for r in results)
+        for mode in ("dense", "bm25", "hybrid"):
+            results = retriever().search("origination fee early repayment", tenant, mode=mode)
+            assert results and all(r.chunk.tenant_id == tenant for r in results)
     assert retriever().search("fees", "unknown-lender") == []
 
 
-def test_keyword_queries_find_the_right_section():
-    top = retriever().search("appeal a declined application", "kestrel")[0]
+def test_bm25_finds_keyword_queries():
+    top = retriever().search("appeal a declined application", "kestrel", mode="bm25")[0]
     assert top.chunk.id == "kestrel/04-declines-appeals-improving#appeals"
 
 
@@ -50,3 +51,18 @@ def test_unretrieved_citations_are_removed():
     text = "No fee [kestrel/03-rates-fees-repayment#fees]. Approved [kestrel/decision-record]."
     assert strip_unretrieved_citations(text, [retrieved]) == \
         "No fee [kestrel/03-rates-fees-repayment#fees]. Approved."
+
+
+def test_max_approvable_loan_counterfactual():
+    from sentinel.scoring.model import get_credit_model
+    from sentinel.tenants import max_approvable_loan
+
+    rahul = {"person_age": 41, "person_income": 32000, "person_emp_length": 1, "person_home_ownership": "OWN",
+             "loan_amnt": 25000, "loan_int_rate": 18, "loan_intent": "MEDICAL", "loan_grade": "E",
+             "cb_person_cred_hist_length": 2, "cb_person_default_on_file": "Y"}
+    model = get_credit_model()
+    best = max_approvable_loan(TENANTS["kestrel"], rahul, lambda a: model.predict(a)["probability"])
+    assert best is None or best < 25000
+    if best:
+        scenario = {**rahul, "loan_amnt": best, "loan_percent_income": round(best / 32000, 2)}
+        assert TENANTS["kestrel"].decide(model.predict(scenario)["probability"], scenario)[0] == "approved"

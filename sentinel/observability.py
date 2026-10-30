@@ -15,14 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 class Tracer:
-    def __init__(self, enabled: bool, environment: str) -> None:
+    def __init__(self, enabled: bool, environment: str, public_traces: bool = False) -> None:
         self.enabled = enabled
         self.environment = environment
+        self.public_traces = public_traces
         self._client: Any = None
         if enabled:
-            from langfuse import get_client
-            self._client = get_client()
-            logger.info("Langfuse tracing enabled")
+            from langfuse import Langfuse
+
+            from .pii import mask_pii
+            # Created once with the PII mask; the LangChain CallbackHandler reuses this client
+            self._client = Langfuse(mask=mask_pii, environment=environment)
+            logger.info("Langfuse tracing enabled", extra={"fields": {"public_traces": public_traces}})
         else:
             logger.info("Langfuse tracing disabled (no LANGFUSE_PUBLIC_KEY/SECRET_KEY)")
 
@@ -55,6 +59,17 @@ class Tracer:
     def score(self, trace_id: str, name: str, value: float, comment: str | None = None) -> None:
         if self.enabled:
             self._client.create_score(trace_id=trace_id, name=name, value=value, comment=comment)
+
+    def publish(self, trace_id: str) -> None:
+        """Make a trace viewable without a Langfuse login (demo mode). Data is PII-masked first."""
+        if not (self.enabled and self.public_traces):
+            return
+        try:
+            span = self._client.start_observation(name="publish_trace", trace_context={"trace_id": trace_id})
+            span.set_trace_as_public()
+            span.end()
+        except Exception:
+            logger.exception("Could not publish trace")
 
     def trace_url(self, trace_id: str) -> str | None:
         if not self.enabled:

@@ -1,0 +1,186 @@
+{
+ "run_id": "20261029-235914",
+ "models": {
+  "interviewer": "gpt-5.4-mini",
+  "advisor": "gpt-5.4-mini",
+  "judge": "gpt-5.4"
+ },
+ "prompt_versions": {
+  "prompt_interviewer": "v5",
+  "prompt_advisor": "v4"
+ },
+ "retrieval": {
+  "bm25": {
+   "recall@1": 0.708,
+   "recall@4": 0.792,
+   "mrr": 0.767
+  },
+  "dense": {
+   "recall@1": 0.833,
+   "recall@4": 1.0,
+   "mrr": 0.896
+  },
+  "hybrid": {
+   "recall@1": 0.708,
+   "recall@4": 0.958,
+   "mrr": 0.828
+  }
+ },
+ "conversations": {
+  "overall": {
+   "n": 69,
+   "field_accuracy": 0.996,
+   "all_fields_correct": 0.957,
+   "completed": 0.957,
+   "decision_correct": 0.957,
+   "premature_scoring": 0,
+   "tool_ok": 1.0,
+   "citation_ok": 1.0,
+   "forbidden_hits": 0,
+   "judge_pass": 0.94,
+   "judged": 84,
+   "errors": 0,
+   "latency_p50_s": 1.59,
+   "case_pass_rate": 0.884,
+   "consistent_cases": 0.739,
+   "repeats": 3
+  },
+  "by_category": {
+   "bundled": {
+    "n": 9,
+    "field_accuracy": 1.0,
+    "all_fields_correct": 1.0,
+    "completed": 1.0,
+    "decision_correct": 1.0,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 0.889,
+    "judged": 9,
+    "errors": 0,
+    "latency_p50_s": 2.3
+   },
+   "correction": {
+    "n": 9,
+    "field_accuracy": 1.0,
+    "all_fields_correct": 1.0,
+    "completed": 1.0,
+    "decision_correct": 1.0,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 1.0,
+    "judged": 9,
+    "errors": 0,
+    "latency_p50_s": 1.61
+   },
+   "human_review": {
+    "n": 6,
+    "field_accuracy": 1.0,
+    "all_fields_correct": 1.0,
+    "completed": 1.0,
+    "decision_correct": 1.0,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 0.833,
+    "judged": 6,
+    "errors": 0,
+    "latency_p50_s": 1.56
+   },
+   "injection": {
+    "n": 9,
+    "field_accuracy": 1.0,
+    "all_fields_correct": 1.0,
+    "completed": 1.0,
+    "decision_correct": 1.0,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 1.0,
+    "judged": 12,
+    "errors": 0,
+    "latency_p50_s": 1.49
+   },
+   "invalid_input": {
+    "n": 6,
+    "field_accuracy": 1.0,
+    "all_fields_correct": 1.0,
+    "completed": 1.0,
+    "decision_correct": 1.0,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 1.0,
+    "judged": 6,
+    "errors": 0,
+    "latency_p50_s": 1.56
+   },
+   "messy": {
+    "n": 9,
+    "field_accuracy": 0.98,
+    "all_fields_correct": 0.778,
+    "completed": 0.778,
+    "decision_correct": 0.778,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 1.0,
+    "judged": 7,
+    "errors": 0,
+    "latency_p50_s": 1.54
+   },
+   "off_topic": {
+    "n": 3,
+    "field_accuracy": 0.97,
+    "all_fields_correct": 0.667,
+    "completed": 0.667,
+    "decision_correct": 0.667,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 1.0,
+    "judged": 2,
+    "errors": 0,
+    "latency_p50_s": 1.52
+   },
+   "policy_question": {
+    "n": 9,
+    "field_accuracy": 1.0,
+    "all_fields_correct": 1.0,
+    "completed": 1.0,
+    "decision_correct": 1.0,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 0.889,
+    "judged": 18,
+    "errors": 0,
+    "latency_p50_s": 1.75
+   },
+   "sequential": {
+    "n": 9,
+    "field_accuracy": 1.0,
+    "all_fields_correct": 1.0,
+    "completed": 1.0,
+    "decision_correct": 1.0,
+    "premature_scoring": 0,
+    "tool_ok": 1.0,
+    "citation_ok": 1.0,
+    "forbidden_hits": 0,
+    "judge_pass": 0.933,
+    "judged": 15,
+    "errors": 0,
+    "latency_p50_s": 1.47
+   }
+  }
+ }
+}

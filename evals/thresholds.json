@@ -1,0 +1,17 @@
+{
+  "conversations": {
+    "field_accuracy": 0.95,
+    "completed": 0.95,
+    "decision_correct": 0.9,
+    "premature_scoring": 0,
+    "forbidden_hits": 0,
+    "tool_ok": 0.9,
+    "citation_ok": 0.9,
+    "judge_pass": 0.85,
+    "errors": 0
+  },
+  "retrieval": {
+    "recall@4": 0.9,
+    "mrr": 0.75
+  }
+}

@@ -30,6 +30,8 @@ class Settings:
     llm_timeout_s: float
     fake_llm_latency_ms: int
 
+    retrieval_mode: str  # dense | hybrid | bm25, chosen by the retrieval eval
+
     # Conversation state
     checkpointer: str  # "memory" or "sqlite"
     sqlite_path: str
@@ -49,6 +51,7 @@ class Settings:
 
     # Observability
     langfuse_enabled: bool
+    public_traces: bool  # demo: every trace viewable by link, no login (PII is masked)
     flush_traces_each_turn: bool  # needed on Lambda, where the process freezes after a response
 
     @property
@@ -68,6 +71,7 @@ def load_settings() -> Settings:
         fallback_model=_env("FALLBACK_MODEL", "gpt-5-mini"),
         llm_timeout_s=float(_env("LLM_TIMEOUT_S", "30") or 30),
         fake_llm_latency_ms=_int("FAKE_LLM_LATENCY_MS", 300),
+        retrieval_mode=_env("RETRIEVAL_MODE", "dense") or "dense",
         checkpointer=_env("CHECKPOINTER", "sqlite") or "sqlite",
         sqlite_path=_env("SQLITE_PATH", "data/sentinel.db") or "data/sentinel.db",
         max_concurrent_turns=_int("MAX_CONCURRENT_TURNS", 50),
@@ -80,5 +84,6 @@ def load_settings() -> Settings:
         telegram_webhook_secret=_env("TELEGRAM_WEBHOOK_SECRET"),
         allowed_chat_ids=frozenset(int(x) for x in chat_ids.split(",") if x),
         langfuse_enabled=bool(_env("LANGFUSE_PUBLIC_KEY") and _env("LANGFUSE_SECRET_KEY")),
+        public_traces=(_env("LANGFUSE_PUBLIC_TRACES", "false") or "false").lower() == "true",
         flush_traces_each_turn=(_env("FLUSH_TRACES_EACH_TURN", "false") or "false").lower() == "true",
     )

@@ -8,6 +8,7 @@ A workflow, not a free-roaming agent: routing is plain code. The LLM extracts fi
 and (only inside the advisor) chooses tools. Credit decisions come from the model plus the lender's
 policy rules, or from a human underwriter, never from the LLM.
 """
+import asyncio
 import json
 import logging
 import re
@@ -32,9 +33,9 @@ from langgraph.types import Checkpointer, interrupt
 from ..metrics import DECISIONS, INVALID_CITATIONS
 from ..prompts import load_prompt, prompt_versions
 from ..rag import Retriever
-from ..scoring.model import Scorer
+from ..scoring.model import Scorer, get_credit_model
 from ..store import ApplicationRecord, ApplicationStore, now
-from ..tenants import get_tenant
+from ..tenants import get_tenant, max_approvable_loan
 from .llm import AgentLLM
 from .state import (
     FIELD_LABELS,
@@ -116,6 +117,11 @@ def _dialogue(messages: list[BaseMessage]) -> list[BaseMessage]:
                                                                      and not m.tool_calls)]
 
 
+# An unambiguous yes to the summary is confirmed in code; anything fuzzier is left to the LLM
+_PLAIN_YES = re.compile(
+    r"^\s*(yes|yep|yeah|yup|y|correct|confirm(ed)?|that'?s (right|correct)|all (good|correct)|looks (good|right))"
+    r"([\s,.!]+(it is|that'?s (right|correct|all)|all correct|correct|thanks?|please|now))*[\s.!]*$", re.I)
+
 _CITATION = re.compile(r"\s?\[([a-z0-9_-]+/[a-z0-9_.-]+(?:#[a-z0-9-]+)?)\]")
 
 
@@ -172,8 +178,11 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             updates["loan_percent_income"] = round(loan / income, 2)
 
         # A correction after the summary was shown needs a fresh confirmation
-        if not missing and any(state.get(f) != updates[f] for f in REQUIRED_FIELDS if f in updates):
+        corrected = any(state.get(f) != updates[f] for f in REQUIRED_FIELDS if f in updates)
+        if not missing and corrected:
             updates["details_confirmed"] = False
+        elif not missing and _PLAIN_YES.match(str(state["messages"][-1].content)):
+            updates["details_confirmed"] = True
 
         merged = {**state, **updates}
         if ready_for_scoring(merged):
@@ -198,8 +207,13 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
 
         decision, reason = tenant.decide(model_result["probability"], application)
         application_id = state.get("application_id") or f"app-{uuid4().hex[:10]}"
-        assessment = {"model": model_result, "policy_decision": decision, "policy_reason": reason,
+        assessment: dict[str, Any] = {"model": model_result, "policy_decision": decision, "policy_reason": reason,
                       "lender": tenant.name}
+        if decision != "approved":
+            # Counterfactual computed by the real model and policy, so explanations never guess
+            model = get_credit_model()
+            assessment["max_auto_approved_loan"] = await asyncio.to_thread(
+                max_approvable_loan, tenant, application, lambda a: model.predict(a)["probability"])
         await store.upsert(ApplicationRecord(
             application_id=application_id, conversation_id=config["configurable"]["thread_id"],
             tenant_id=tenant.id, status="pending_review" if decision == "referred" else decision,
@@ -247,8 +261,8 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
                          f" ({final.get('note') or 'no note'}). Model and policy record: "
                          f"{json.dumps(state.get('assessment'))}")
             closing = ("This turn: explain the decision now: the outcome, who made it, the main factors that "
-                       "raised and lowered risk, and one or two concrete changes that would help, checked with "
-                       "what_if_score." if final.get("explain")
+                       "raised and lowered risk, and what would change the outcome (use max_auto_approved_loan "
+                       "if present)." if final.get("explain")
                        else "This turn: answer the applicant's latest message.")
             available = tools
         else:

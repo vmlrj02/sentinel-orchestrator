@@ -35,6 +35,23 @@ class Tenant:
         return "approved", f"estimated default risk {probability:.0%} is below {self.approve_below:.0%}"
 
 
+def max_approvable_loan(tenant: Tenant, application: dict[str, Any],
+                        probability_of: Any, step: float = 500) -> float | None:
+    """Largest loan (in `step` increments, up to the requested amount) this lender would auto-approve,
+    holding everything else fixed. Lets explanations say exactly what would change the outcome."""
+    best = None
+    low, high = 1, int(application["loan_amnt"] // step)
+    while low <= high:  # risk rises with loan size, so binary search the step count
+        mid = (low + high) // 2
+        scenario = {**application, "loan_amnt": mid * step,
+                    "loan_percent_income": round(mid * step / application["person_income"], 2)}
+        if tenant.decide(probability_of(scenario), scenario)[0] == "approved":
+            best, low = mid * step, mid + 1
+        else:
+            high = mid - 1
+    return best
+
+
 TENANTS: dict[str, Tenant] = {
     "aster": Tenant("aster", "Aster Bank", approve_below=0.30, decline_above=0.60, auto_limit=20_000,
                     max_loan_to_income=0.40, review_sla="2 business days"),

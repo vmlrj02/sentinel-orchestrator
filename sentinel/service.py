@@ -84,6 +84,7 @@ class TurnResult:
     explained: bool = False  # the advisor wrote this turn's reply (decision explanation or answer)
     tools: list[str] = field(default_factory=list)
     citations: list[str] = field(default_factory=list)
+    what_if: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ChatService:
@@ -162,6 +163,7 @@ class ChatService:
                         graph_input["tenant_id"] = tenant_id or DEFAULT_TENANT
                     async for event in self._run(graph_input, config):
                         yield event
+            self.tracer.publish(trace_id)
             yield {"type": "done", "conversation_id": conversation_id, "trace_id": trace_id,
                    "trace_url": self.tracer.trace_url(trace_id)}
         except TimeoutError:
@@ -304,6 +306,8 @@ async def _collect(conversation_id: str, events: AsyncIterator[Event]) -> TurnRe
             result.tools.append(event["name"])
         elif kind == "citations":
             result.citations.extend(item["id"] for item in event["items"])
+        elif kind == "what_if":
+            result.what_if.append(event["result"])
         elif kind == "error":
             result.error = event["code"]
             result.messages.append(event["message"])

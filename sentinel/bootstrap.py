@@ -37,7 +37,7 @@ def make_llm(settings: Settings) -> AgentLLM:
 
 def make_retriever(settings: Settings) -> Retriever:
     embedder = HashingEmbedder() if settings.llm_provider == "fake" else OpenAIEmbedder(settings.openai_api_key)
-    return load_retriever(embedder)
+    return load_retriever(embedder, mode=settings.retrieval_mode)  # type: ignore[arg-type]
 
 
 @asynccontextmanager
@@ -63,7 +63,7 @@ async def build_runtime(settings: Settings, llm: AgentLLM | None = None,
                         retriever: Retriever | None = None) -> AsyncIterator[Runtime]:
     llm = llm or make_llm(settings)
     retriever = retriever or make_retriever(settings)
-    tracer = Tracer(settings.langfuse_enabled, settings.environment)
+    tracer = Tracer(settings.langfuse_enabled, settings.environment, settings.public_traces)
     async with open_stores(settings) as (checkpointer, store):
         graph = build_graph(llm, LocalScorer(), retriever, store, checkpointer, settings.max_history_messages)
         try:

@@ -1,0 +1,24 @@
+{"id": "r01", "lender": "aster", "query": "Is there an origination fee?", "expected": "aster/03-rates-fees-repayment#fees"}
+{"id": "r02", "lender": "aster", "query": "can I pay off the loan sooner without being charged", "expected": "aster/03-rates-fees-repayment#fees"}
+{"id": "r03", "lender": "aster", "query": "what paperwork does a freelancer need to show income", "expected": "aster/02-application-documents#income"}
+{"id": "r04", "lender": "aster", "query": "how much can I borrow if I make 50000 a year", "expected": "aster/01-lending-policy#how-much-you-can-borrow"}
+{"id": "r05", "lender": "aster", "query": "I've never had a credit card, can I still apply?", "expected": "aster/01-lending-policy#who-can-apply"}
+{"id": "r06", "lender": "aster", "query": "How long do I have to appeal a decline?", "expected": "aster/04-declines-appeals-improving#appeals"}
+{"id": "r07", "lender": "aster", "query": "What rate would a grade E loan get?", "expected": "aster/03-rates-fees-repayment#interest-rates-by-loan-grade"}
+{"id": "r08", "lender": "aster", "query": "I'm renting and want to renovate my kitchen, what do I need", "expected": "aster/02-application-documents#for-specific-loan-purposes"}
+{"id": "r09", "lender": "aster", "query": "who decides if my application is borderline", "expected": "aster/01-lending-policy#how-decisions-are-made"}
+{"id": "r10", "lender": "aster", "query": "what happens if I miss a payment", "expected": "aster/03-rates-fees-repayment#missed-payments"}
+{"id": "r11", "lender": "aster", "query": "tips to get approved next time", "expected": "aster/04-declines-appeals-improving#how-to-improve-your-chances"}
+{"id": "r12", "lender": "aster", "query": "I defaulted three years ago, does that rule me out", "expected": "aster/01-lending-policy#previous-defaults"}
+{"id": "r13", "lender": "kestrel", "query": "Is there an origination fee?", "expected": "kestrel/03-rates-fees-repayment#fees"}
+{"id": "r14", "lender": "kestrel", "query": "do I need to be a member to borrow", "expected": "kestrel/01-lending-policy#who-can-apply"}
+{"id": "r15", "lender": "kestrel", "query": "I have almost no credit history", "expected": "kestrel/01-lending-policy#who-can-apply"}
+{"id": "r16", "lender": "kestrel", "query": "what if I lose my job and can't pay for a while", "expected": "kestrel/03-rates-fees-repayment#hardship-programme"}
+{"id": "r17", "lender": "kestrel", "query": "What ID do I need if I don't have a passport", "expected": "kestrel/02-application-documents#identity"}
+{"id": "r18", "lender": "kestrel", "query": "discount for consolidating debts", "expected": "kestrel/01-lending-policy#loan-purposes-we-support"}
+{"id": "r19", "lender": "kestrel", "query": "how soon can I try again after being turned down", "expected": "kestrel/04-declines-appeals-improving#reapplying"}
+{"id": "r20", "lender": "kestrel", "query": "Credit Builder loan", "expected": "kestrel/04-declines-appeals-improving#improving-your-chances"}
+{"id": "r21", "lender": "kestrel", "query": "can I pay weekly to match my wages", "expected": "kestrel/03-rates-fees-repayment#terms"}
+{"id": "r22", "lender": "kestrel", "query": "maximum loan for a brand new member", "expected": "kestrel/01-lending-policy#how-much-you-can-borrow"}
+{"id": "r23", "lender": "kestrel", "query": "free money advice after a rejection", "expected": "kestrel/04-declines-appeals-improving#free-financial-counselling"}
+{"id": "r24", "lender": "kestrel", "query": "what does my co-signer need to bring", "expected": "kestrel/02-application-documents#co-signers"}

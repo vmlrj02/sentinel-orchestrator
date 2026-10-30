@@ -63,3 +63,12 @@ async def test_follow_up_questions_go_to_advisor(service, fake_llm):
     result = await service.run_turn("c3", "u1", "why?", "test")
     assert result.explained and result.assessment is None
     assert fake_llm.calls == calls + 1  # one advisor call, no re-interview, no re-scoring
+
+
+def test_plain_yes_patterns():
+    from sentinel.agent.graph import _PLAIN_YES
+    for text in ["yes", "Yes, that's right", "yep all correct", "correct", "that's correct", "yes correct now",
+                 "Looks good!", "yes please"]:
+        assert _PLAIN_YES.match(text), text
+    for text in ["yes but change the amount to 10000", "no", "not quite, income is 34000", "yes?? why grade E"]:
+        assert not _PLAIN_YES.match(text), text
