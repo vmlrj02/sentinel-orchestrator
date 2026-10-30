@@ -53,6 +53,17 @@ from .tools import make_tools
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 3
+# Collected fields live in state, so the interviewer only needs the latest exchange: tokens per turn stay
+# flat however long the conversation gets
+INTERVIEWER_WINDOW = 6
+RESUME_OPTIONS = ["Apply for a loan", "What documents do I need?"]
+
+
+def out_of_scope_message(lender: str) -> AIMessage:
+    return AIMessage(
+        f"Sorry, I can only help with personal loan applications and questions about {lender}'s loan "
+        f"policies. For anything else, like deposits or accounts, please contact {lender} directly.",
+        response_metadata={"options": RESUME_OPTIONS})
 SCORING_FAILED = "I couldn't reach the credit model just now. Send any message to try again."
 
 
@@ -187,7 +198,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             missing=str([f"{f} ({FIELD_LABELS[f]})" for f in missing]),
         )
         result = await llm.interview([SystemMessage(system), *_dialogue(_recent(state["messages"],
-                                                                                  max_history_messages))])
+                                                                                  INTERVIEWER_WINDOW))])
 
         # exclude_none so a turn that mentions nothing new doesn't wipe stored values
         updates: dict[str, Any] = result.model_dump(exclude_none=True)
@@ -206,7 +217,17 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         elif not missing and _PLAIN_YES.match(str(state["messages"][-1].content)):
             updates["details_confirmed"] = True
 
+        # Progress = a new or changed detail, a confirmation, or a real question. Turns without progress
+        # are counted so the service can stop spending tokens on a conversation that is going nowhere.
+        changed = any(state.get(f) != updates[f] for f in REQUIRED_FIELDS if f in updates)
+        progress = changed or bool(result.applicant_question) or bool(updates.get("details_confirmed"))
+        updates["stalled_turns"] = 0 if progress else state.get("stalled_turns", 0) + 1
+        updates.pop("out_of_scope", None)
+        updates.pop("person_name", None)  # not collected: the decision doesn't use it
+
         merged = {**state, **updates}
+        if result.out_of_scope and not progress:
+            return {**updates, "messages": [out_of_scope_message(get_tenant(state.get("tenant_id")).name)]}
         if ready_for_scoring(merged):
             get_stream_writer()({"type": "status", "text": "Scoring your application..."})
             return updates  # the advisor's explanation is this turn's reply

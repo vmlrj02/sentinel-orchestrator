@@ -46,6 +46,8 @@ class Settings:
     turn_timeout_s: float
     max_message_chars: int
     max_history_messages: int
+    stall_limit: int                 # turns without progress before replies stop calling the LLM
+    max_turns_per_conversation: int  # hard cost ceiling for one conversation
 
     # Internal endpoints (review queue, audit log, metrics, docs) need this bearer token
     admin_token: str | None
@@ -92,6 +94,8 @@ def load_settings() -> Settings:
         turn_timeout_s=float(_env("TURN_TIMEOUT_S", "60") or 60),
         max_message_chars=_int("MAX_MESSAGE_CHARS", 1000),
         max_history_messages=_int("MAX_HISTORY_MESSAGES", 30),
+        stall_limit=_int("STALL_LIMIT", 3),
+        max_turns_per_conversation=_int("MAX_TURNS_PER_CONVERSATION", 40),
         admin_token=_env("ADMIN_TOKEN"),
         telegram_token=_env("TELEGRAM_TOKEN"),
         telegram_mode=_env("TELEGRAM_MODE", "polling") or "polling",

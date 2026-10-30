@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Command
 
+from .agent.graph import RESUME_OPTIONS
 from .agent.state import REQUIRED_FIELDS, application_fields
 from .config import Settings
 from .locks import ConversationLocks, InProcessLocks
@@ -152,12 +153,30 @@ class ChatService:
         try:
             async with self.locks.hold(conversation_id):
                 snapshot = await self.graph.aget_state(config)
+                values = snapshot.values or {}
+                lender = get_tenant(values.get("tenant_id") or tenant_id).name
+                turns = sum(isinstance(m, HumanMessage) for m in values.get("messages", []))
                 if snapshot.interrupts:
                     outcome = "under_review"
                     yield {"type": "message", "node": "service", "text": (
                         "Your application is with an underwriter right now. I'll message you here as soon as "
                         "they decide.")}
+                elif turns >= self.settings.max_turns_per_conversation:
+                    # Cost ceiling: no LLM call once a conversation hits the limit
+                    outcome = "turn_limit"
+                    yield {"type": "message", "node": "service", "text": (
+                        "This conversation has reached its length limit. Please tap Start over to begin again.")}
+                elif values.get("stalled_turns", 0) >= self.settings.stall_limit and text not in RESUME_OPTIONS:
+                    # Several turns without progress: answer from a template instead of paying for LLM calls
+                    # until the person picks a way forward
+                    outcome = "stalled"
+                    yield {"type": "message", "node": "service", "options": RESUME_OPTIONS, "text": (
+                        f"It looks like a loan isn't what you need right now. I can help you apply for a "
+                        f"personal loan or answer questions about {lender}'s loan policies. For anything else, "
+                        f"please contact {lender} directly.")}
                 else:
+                    if values.get("stalled_turns", 0) >= self.settings.stall_limit:
+                        await self.graph.aupdate_state(config, {"stalled_turns": 0}, as_node="interviewer")
                     graph_input: dict[str, Any] = {"messages": [HumanMessage(text)]}
                     if not snapshot.values.get("tenant_id"):
                         graph_input["tenant_id"] = tenant_id or DEFAULT_TENANT
@@ -286,6 +305,7 @@ class ChatService:
         config = {"configurable": {"thread_id": conversation_id}}
         cleared: dict[str, Any] = {f: None for f in [*REQUIRED_FIELDS, "loan_percent_income", "assessment",
                                                      "final_decision", "application_id", "applicant_question"]}
+        cleared["stalled_turns"] = 0
         async with self.locks.hold(conversation_id):
             snapshot = await self.graph.aget_state(config)
             if snapshot.interrupts:

@@ -81,6 +81,8 @@ class FakeAgentLLM:
         fields: dict[str, Any] = {k: v for k, v in _PAIR.findall(text) if k in REQUIRED_FIELDS}
         if _YES.match(text):
             fields["details_confirmed"] = True
+        if "outofscope:" in text:
+            fields["out_of_scope"] = True
         if "question:" in text:
             fields["applicant_question"] = text.split("question:", 1)[1].strip()
         return SentinelResponse(assistant_message="Thanks. What else can you tell me?", **fields)

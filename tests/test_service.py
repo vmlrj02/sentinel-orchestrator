@@ -81,3 +81,45 @@ async def test_provider_outage_is_reported_clearly(service, fake_llm, monkeypatc
     monkeypatch.setattr(fake_llm, "interview", out_of_quota)
     result = await service.run_turn("c", "u", "hello", "test")
     assert result.error == "llm_unavailable" and "temporarily unavailable" in result.messages[0]
+
+
+async def test_out_of_scope_requests_get_a_clear_answer(service):
+    result = await service.run_turn("oos", "u", "outofscope: I need to deposit cash", "test")
+    assert "contact Aster Bank directly" in result.messages[-1]
+
+
+async def test_stalled_conversation_stops_calling_the_llm(service, fake_llm):
+    for text in ["I won't say", "no need", "outofscope: deposit cash"]:  # three turns, no progress
+        await service.run_turn("stall", "u", text, "test")
+    calls = fake_llm.calls
+    for text in ["blah", "still no"]:
+        events = [e async for e in service.stream_turn("stall", "u", text, "test")]
+        message = next(e for e in events if e["type"] == "message")
+        assert "isn't what you need" in message["text"] and message["options"]
+    assert fake_llm.calls == calls  # zero tokens spent on the stalled turns
+
+    resumed = await service.run_turn("stall", "u", "Apply for a loan", "test")  # a button resumes the chat
+    assert fake_llm.calls == calls + 1 and "isn't what you need" not in resumed.messages[-1]
+
+
+async def test_progress_resets_the_stall_counter(service, fake_llm):
+    for text in ["hmm", "ok", "person_age=30", "hmm", "ok"]:
+        await service.run_turn("progress", "u", text, "test")
+    calls = fake_llm.calls
+    await service.run_turn("progress", "u", "hmm", "test")
+    assert fake_llm.calls == calls + 1  # only 2 non-progress turns since the last detail
+
+
+async def test_conversation_turn_cap(settings, fake_llm):
+    service = make_service(dataclasses.replace(settings, max_turns_per_conversation=2), fake_llm)
+    for text in ["person_age=30", "person_income=50000"]:
+        await service.run_turn("cap", "u", text, "test")
+    calls = fake_llm.calls
+    result = await service.run_turn("cap", "u", "person_emp_length=3", "test")
+    assert "length limit" in result.messages[0] and fake_llm.calls == calls
+
+
+async def test_name_is_not_collected(service):
+    result = await service.run_turn("n", "u", "hello", "test")
+    state = await service.get_state("n")
+    assert "person_name" not in state["missing"] and "name" not in result.messages[-1].lower()

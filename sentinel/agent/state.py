@@ -6,8 +6,10 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
+# The credit model's inputs, and nothing more: the name is not used for the decision, so it is not
+# collected (data minimisation; also one less question for people to refuse)
 REQUIRED_FIELDS = [
-    "person_name", "person_age", "person_income", "person_emp_length",
+    "person_age", "person_income", "person_emp_length",
     "person_home_ownership", "loan_amnt", "loan_int_rate", "loan_intent",
     "loan_grade", "cb_person_cred_hist_length", "cb_person_default_on_file",
 ]
@@ -74,6 +76,7 @@ class AgentState(TypedDict, total=False):
     tenant_id: str                         # set by the service on the first turn, never by the LLM
     details_confirmed: bool
     applicant_question: Optional[str]      # policy question the interviewer routed to the advisor
+    stalled_turns: int                     # consecutive turns with no progress (cost guard)
     application_id: Optional[str]
     assessment: Optional[dict[str, Any]]   # {"model": credit model output, "policy_decision", "policy_reason"}
     final_decision: Optional[dict[str, Any]]  # {"decision", "decided_by", "note"}
@@ -100,6 +103,11 @@ class SentinelResponse(BaseModel):
         None,
         description="If the applicant asked a question about the lender's rules, process, documents, rates, "
                     "fees, limits or timelines, copy the question here. Leave empty otherwise.",
+    )
+    out_of_scope: Optional[bool] = Field(
+        None,
+        description="True if the latest message asks for something other than a personal loan application "
+                    "or this lender's loan policies (e.g. deposits, accounts, cards, transfers).",
     )
     details_confirmed: Optional[bool] = Field(
         None,

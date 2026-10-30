@@ -25,7 +25,6 @@ def test_summary_lists_every_field_readably():
     assert "Interest rate (%): 18.5" in text
     assert "Previous default: Yes" in text
     assert "Purpose: Home improvement" in text
-    assert "Name: Rahul Mehta" in summary_message({**state, "person_name": "Rahul Mehta"})
     assert text.count("\n- ") == len(REQUIRED_FIELDS)
 
 
