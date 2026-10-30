@@ -183,7 +183,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         slot = state.get("pending_slot") or next_slot(state)
         attempts = dict(state.get("slot_attempts") or {})
         updates: dict[str, Any] = {}
-        question = out_of_scope = notice = None
+        question = out_of_scope = None
         path = "filled_fast"
 
         if slot == CONFIRM and _PLAIN_YES.match(text):
@@ -195,13 +195,12 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
                 "No problem. What would you like to change? You can just tell me the right value.",
                 response_metadata={"options": CHANGE_OPTIONS})]}
         elif (value := understand(slot, text)) == MAX_AMOUNT:
-            # "the most you can give": the policy maximum for this applicant, stated so they can change it
-            income = state.get("person_income")
-            amount = tenant.max_loan if not income else \
-                max(tenant.min_loan, min(tenant.max_loan, tenant.max_loan_to_income * income // 500 * 500))
-            updates[slot] = float(amount)
-            limit = "for your income" if income and amount < tenant.max_loan else "on a personal loan"
-            notice = f"I've put down {amount:,.0f}, the most {tenant.name} lends {limit}. You can change it any time."
+            # "The most you can give": never quote or pre-fill an amount before assessment, that would imply
+            # the applicant qualifies for something
+            record_slot(slot, "reask")
+            return {"pending_slot": slot, "messages": [AIMessage(
+                "I can't say what you'd qualify for until your application has been assessed. Tell me the amount "
+                "you need, and you'll get a decision at the end.\n\nHow much would you like to borrow?")]}
         elif value is not None:
             updates[slot] = value
         else:
@@ -275,7 +274,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             return updates  # the advisor answers, then the next question is appended
         if updates["pending_slot"] == CONFIRM and slot != CONFIRM:
             record_funnel("summary_shown")
-        return {**updates, "messages": [question_message(merged, prefix=notice or "Thanks.")]}
+        return {**updates, "messages": [question_message(merged)]}
 
     async def scoring(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         """Scores the confirmed application, applies the lender's policy, and records the decision."""

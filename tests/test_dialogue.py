@@ -129,14 +129,15 @@ async def test_clarification_explains_the_current_question(service, fake_llm, te
 
 @pytest.mark.parametrize("text", ["what you can give me?", "the max you can give", "i said max that i am eligible for",
                                   "as much as possible", "whatever you can give"])
-async def test_asking_for_the_maximum_fills_the_policy_limit(service, fake_llm, text):
+async def test_asking_for_the_maximum_does_not_promise_an_amount(service, fake_llm, text):
     cid = f"max{abs(hash(text))}"
     await service.run_turn(cid, "u", "person_age=36 person_income=60000 person_emp_length=4", "t")
     await service.run_turn(cid, "u", "other", "t")
     calls = fake_llm.calls
     result = await service.run_turn(cid, "u", text, "t")
-    assert result.messages[-1].startswith("I've put down 24,000, the most Aster Bank lends for your income.")
-    assert (await service.get_state(cid))["application"]["loan_amnt"] == 24_000  # 40% of 60,000
+    assert result.messages[-1].startswith("I can't say what you'd qualify for until your application has been")
+    assert not any(ch.isdigit() for ch in result.messages[-1])  # no amount quoted
+    assert "loan_amnt" not in (await service.get_state(cid))["application"]
     assert fake_llm.calls == calls
 
 
