@@ -28,6 +28,7 @@ from .agent.dialogue import (
     field_for,
     next_slot,
     opening_message,
+    playback,
     question_message,
 )
 from .agent.graph import RESUME_OPTIONS
@@ -399,10 +400,9 @@ class ChatService:
         elif name == "clarify":
             reply = clarify_message(values)
         elif name == "frustrated":
-            collected = application_fields(values)
-            recap = ", ".join(f"{SUMMARY_LABELS[f].lower()} {v:,.0f}" if isinstance(v, (int, float))
-                              else f"{SUMMARY_LABELS[f].lower()} {str(v).capitalize()}"
-                              for f, v in collected.items() if f in SUMMARY_LABELS)
+            # Read back in the person's own style ("9 lakh a year"), same as everywhere else
+            recap = ", ".join(playback(f, values[f], values.get("number_style"))
+                              for f in REQUIRED_FIELDS if values.get(f) is not None)
             question = question_message(values, prefix="")
             reply = AIMessage(
                 "Sorry, I've made this harder than it should be. "

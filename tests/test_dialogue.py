@@ -153,7 +153,7 @@ async def test_frustration_gets_an_apology_and_a_recap(service, fake_llm):
     calls = fake_llm.calls
     result = await service.run_turn("fr", "u", "i already told you stupid", "t")
     assert result.messages[-1].startswith("Sorry, I've made this harder than it should be.")
-    assert "annual income 60,000" in result.messages[-1] and "Do you rent or own your home?" in result.messages[-1]
+    assert "60,000 a year" in result.messages[-1] and "Do you rent or own your home?" in result.messages[-1]
     assert "Talk to a person" in result.options and fake_llm.calls == calls
 
 
