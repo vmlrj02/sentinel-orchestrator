@@ -10,7 +10,6 @@ It owns the production concerns around a graph run:
 import asyncio
 import logging
 import time
-import weakref
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -22,8 +21,9 @@ from langgraph.types import Command
 
 from .agent.state import REQUIRED_FIELDS, application_fields
 from .config import Settings
+from .locks import ConversationLocks, InProcessLocks
 from .logging_setup import channel_var, conversation_id_var, trace_id_var
-from .metrics import IN_FLIGHT, QUEUE_WAIT, RATE_LIMITED, TURN_LATENCY, TURNS
+from .metrics import IN_FLIGHT, QUEUE_WAIT, RATE_LIMITED, record_feedback, record_turn
 from .observability import Tracer
 from .prompts import prompt_versions
 from .store import ApplicationRecord, ApplicationStore
@@ -88,13 +88,14 @@ class TurnResult:
 
 
 class ChatService:
-    def __init__(self, graph: Any, settings: Settings, tracer: Tracer, store: ApplicationStore) -> None:
+    def __init__(self, graph: Any, settings: Settings, tracer: Tracer, store: ApplicationStore,
+                 locks: ConversationLocks | None = None) -> None:
         self.graph = graph
         self.settings = settings
         self.tracer = tracer
         self.store = store
         self._slots = asyncio.Semaphore(settings.max_concurrent_turns)
-        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        self.locks: ConversationLocks = locks or InProcessLocks()
         self._rate = RateLimiter(settings.rate_limit_per_minute)
         self._notifiers: list[Notifier] = []
         self.seen_messages = SeenIds()
@@ -102,13 +103,6 @@ class ChatService:
     def on_notify(self, notifier: Notifier) -> None:
         """Channels register here to push messages that arrive outside a turn (underwriter decisions)."""
         self._notifiers.append(notifier)
-
-    def _lock(self, conversation_id: str) -> asyncio.Lock:
-        lock = self._locks.get(conversation_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[conversation_id] = lock
-        return lock
 
     def _config(self, conversation_id: str, trace_id: str, user_id: str, channel: str,
                 tags: list[str] | None = None) -> dict[str, Any]:
@@ -141,7 +135,7 @@ class ChatService:
             return
         if not self._rate.allow(user_id):
             RATE_LIMITED.labels(channel).inc()
-            TURNS.labels(channel, "rate_limited").inc()
+            record_turn(channel, "rate_limited", 0.0)
             yield {"type": "error", "code": "rate_limited",
                    "message": "You're sending messages too fast. Please wait a moment."}
             return
@@ -150,7 +144,7 @@ class ChatService:
         outcome = "ok"
         config = self._config(conversation_id, trace_id, user_id, channel, tags)
         try:
-            async with self._lock(conversation_id):
+            async with self.locks.hold(conversation_id):
                 snapshot = await self.graph.aget_state(config)
                 if snapshot.interrupts:
                     outcome = "under_review"
@@ -178,8 +172,7 @@ class ChatService:
                    "message": "Sorry, something went wrong on my side. Please try again."}
         finally:
             elapsed = time.perf_counter() - started
-            TURNS.labels(channel, outcome).inc()
-            TURN_LATENCY.labels(channel).observe(elapsed)
+            record_turn(channel, outcome, elapsed)
             logger.info("Turn finished", extra={"fields": {"outcome": outcome, "latency_ms": round(elapsed * 1000),
                                                            "user_id": user_id}})
             if self.settings.flush_traces_each_turn:
@@ -228,7 +221,7 @@ class ChatService:
         trace_id = self.tracer.new_trace_id()
         config = self._config(record.conversation_id, trace_id, f"underwriter-{reviewer}", "review",
                               tags=["human_review"])
-        async with self._lock(record.conversation_id):
+        async with self.locks.hold(record.conversation_id):
             snapshot = await self.graph.aget_state(config)
             if not snapshot.interrupts:
                 raise ReviewError(f"{application_id} has no paused review")
@@ -278,7 +271,7 @@ class ChatService:
         config = {"configurable": {"thread_id": conversation_id}}
         cleared: dict[str, Any] = {f: None for f in [*REQUIRED_FIELDS, "loan_percent_income", "assessment",
                                                      "final_decision", "application_id", "applicant_question"]}
-        async with self._lock(conversation_id):
+        async with self.locks.hold(conversation_id):
             snapshot = await self.graph.aget_state(config)
             if snapshot.interrupts:
                 raise ReviewError("This application is with an underwriter and can't be restarted yet.")
@@ -288,8 +281,7 @@ class ChatService:
             )
 
     def record_feedback(self, trace_id: str, rating: int, comment: str | None = None) -> None:
-        from .metrics import FEEDBACK
-        FEEDBACK.labels("up" if rating > 0 else "down").inc()
+        record_feedback(rating)
         self.tracer.score(trace_id, "user_feedback", 1.0 if rating > 0 else 0.0, comment)
 
 

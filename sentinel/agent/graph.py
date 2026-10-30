@@ -30,7 +30,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Checkpointer, interrupt
 
-from ..metrics import DECISIONS, INVALID_CITATIONS
+from ..metrics import INVALID_CITATIONS, record_decision
 from ..prompts import load_prompt, prompt_versions
 from ..rag import Retriever
 from ..scoring.model import Scorer, get_credit_model
@@ -222,7 +222,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             prompt_versions=prompt_versions(), trace_id=config["configurable"].get("trace_id"),
             decided_at=None if decision == "referred" else now(),
         ))
-        DECISIONS.labels(decision).inc()
+        record_decision(decision)
         get_stream_writer()({"type": "assessment", "application_id": application_id, **assessment})
 
         updates: dict[str, Any] = {"assessment": assessment, "application_id": application_id}
@@ -247,7 +247,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             record.status, record.decided_by = decision, f"underwriter:{reviewer}"
             record.review_note, record.decided_at = note, now()
             await store.upsert(record)
-        DECISIONS.labels(f"underwriter_{decision}").inc()
+        record_decision(f"underwriter_{decision}")
         return {"final_decision": {"decision": decision, "decided_by": f"underwriter:{reviewer}", "note": note,
                                    "explain": True}}
 

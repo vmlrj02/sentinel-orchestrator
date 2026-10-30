@@ -1,0 +1,43 @@
+name: Evals
+
+# Real-model evals cost money, so they run on demand and on PRs that touch prompts, the agent,
+# the policy documents or the eval set. The job fails if any metric drops below evals/thresholds.json.
+on:
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: Runs per case (variance)
+        default: "1"
+  pull_request:
+    paths:
+      - "sentinel/prompts/**"
+      - "sentinel/agent/**"
+      - "sentinel/knowledge/**"
+      - "sentinel/tenants.py"
+      - "evals/**"
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.head.repo.fork }}
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      ENVIRONMENT: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --python 3.12
+      - name: Run evals
+        run: uv run python -m evals.run --concurrency 8 --repeats ${{ inputs.repeats || '1' }}
+      - name: Report
+        if: always()
+        run: cat evals/reports/latest.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: evals/reports/

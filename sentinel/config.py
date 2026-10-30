@@ -33,8 +33,12 @@ class Settings:
     retrieval_mode: str  # dense | hybrid | bm25, chosen by the retrieval eval
 
     # Conversation state
-    checkpointer: str  # "memory" or "sqlite"
+    checkpointer: str  # "memory", "sqlite" (local) or "dynamodb" (Lambda)
     sqlite_path: str
+    checkpoint_table: str | None
+    applications_table: str | None
+    locks_table: str | None
+    metrics_backend: str  # "prometheus" (one process) or "cloudwatch" (EMF, many instances)
 
     # Guards
     max_concurrent_turns: int
@@ -60,6 +64,8 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    from .aws import load_secrets
+    load_secrets()  # no-op unless SECRETS_ARN is set (Lambda)
     chat_ids = (_env("ALLOWED_CHAT_IDS", "") or "").replace(" ", "")
     return Settings(
         environment=_env("ENVIRONMENT", "local") or "local",
@@ -74,6 +80,10 @@ def load_settings() -> Settings:
         retrieval_mode=_env("RETRIEVAL_MODE", "dense") or "dense",
         checkpointer=_env("CHECKPOINTER", "sqlite") or "sqlite",
         sqlite_path=_env("SQLITE_PATH", "data/sentinel.db") or "data/sentinel.db",
+        checkpoint_table=_env("CHECKPOINT_TABLE"),
+        applications_table=_env("APPLICATIONS_TABLE"),
+        locks_table=_env("LOCKS_TABLE"),
+        metrics_backend=_env("METRICS_BACKEND", "prometheus") or "prometheus",
         max_concurrent_turns=_int("MAX_CONCURRENT_TURNS", 50),
         rate_limit_per_minute=_int("RATE_LIMIT_PER_MINUTE", 20),
         turn_timeout_s=float(_env("TURN_TIMEOUT_S", "60") or 60),

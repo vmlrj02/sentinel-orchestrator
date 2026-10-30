@@ -136,7 +136,12 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
     async def system(request: Request) -> dict[str, Any]:
         """Live service numbers for the UI's System panel."""
         rt = runtime(request)
-        return {**metrics.snapshot(), "models": rt.llm.model_names, "environment": settings.environment,
+        if settings.metrics_backend == "cloudwatch":
+            from ..aws import cloudwatch_metrics
+            numbers = await asyncio.to_thread(cloudwatch_metrics().snapshot)
+        else:
+            numbers = {**metrics.snapshot(), "window": "this process, since start"}
+        return {**numbers, "models": rt.llm.model_names, "environment": settings.environment,
                 "langfuse": rt.tracer.enabled, "max_concurrent_turns": settings.max_concurrent_turns}
 
     # --- Chat ---------------------------------------------------------------------------------------

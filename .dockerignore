@@ -1,0 +1,16 @@
+.venv
+.git
+.github
+.env
+_scratch
+data
+logs
+cdk.out
+infra
+evals/reports
+tests
+loadtest
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache

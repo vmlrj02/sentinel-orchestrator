@@ -30,6 +30,39 @@ LLM_LATENCY = Histogram(
 LLM_TOKENS = Counter("sentinel_llm_tokens_total", "LLM tokens", ["model", "kind"])
 
 
+# On Lambda each instance has its own Prometheus registry, so metrics are also written as CloudWatch
+# Embedded Metric Format log lines and aggregated by CloudWatch across instances.
+_emf_enabled = False
+
+
+def enable_emf() -> None:
+    global _emf_enabled
+    _emf_enabled = True
+
+
+def _emf(metrics: dict[str, tuple[float, str]], dimensions: dict[str, str] | None = None) -> None:
+    if _emf_enabled:
+        from .aws import emit_emf
+        emit_emf(metrics, dimensions)
+
+
+def record_turn(channel: str, outcome: str, seconds: float) -> None:
+    TURNS.labels(channel, outcome).inc()
+    TURN_LATENCY.labels(channel).observe(seconds)
+    _emf({"Turns": (1, "Count"), "TurnLatency": (round(seconds * 1000), "Milliseconds")}, {"Outcome": outcome})
+
+
+def record_decision(decision: str) -> None:
+    DECISIONS.labels(decision).inc()
+    _emf({"Decisions": (1, "Count")}, {"Decision": decision})
+
+
+def record_feedback(rating: int) -> None:
+    label = "up" if rating > 0 else "down"
+    FEEDBACK.labels(label).inc()
+    _emf({"Feedback": (1, "Count")}, {"Rating": label})
+
+
 class LLMMetricsCallback(AsyncCallbackHandler):
     """Times each model call and counts tokens, keyed by run id."""
 
@@ -43,18 +76,24 @@ class LLMMetricsCallback(AsyncCallbackHandler):
 
     async def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         started, model = self._started.pop(run_id, (time.perf_counter(), "unknown"))
-        LLM_LATENCY.labels(model).observe(time.perf_counter() - started)
+        elapsed = time.perf_counter() - started
+        LLM_LATENCY.labels(model).observe(elapsed)
         LLM_CALLS.labels(model, "ok").inc()
+        tokens = 0
         for generations in response.generations:
             for gen in generations:
                 usage = getattr(getattr(gen, "message", None), "usage_metadata", None) or {}
                 if usage:
                     LLM_TOKENS.labels(model, "input").inc(usage.get("input_tokens", 0))
                     LLM_TOKENS.labels(model, "output").inc(usage.get("output_tokens", 0))
+                    tokens += usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        _emf({"LLMCalls": (1, "Count"), "LLMTokens": (tokens, "Count"),
+              "LLMLatency": (round(elapsed * 1000), "Milliseconds")})
 
     async def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
         _, model = self._started.pop(run_id, (0.0, "unknown"))
         LLM_CALLS.labels(model, "error").inc()
+        _emf({"LLMErrors": (1, "Count")})
 
 
 def _quantile(buckets: list[tuple[float, float]], q: float) -> float | None:
