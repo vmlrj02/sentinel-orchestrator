@@ -19,7 +19,17 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, Remove
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Command
 
-from .agent.dialogue import CHANGE_OPTIONS, ESCAPES, clarify_message, field_for, next_slot, question_message
+from .agent.dialogue import (
+    CHANGE_OPTIONS,
+    ESCAPES,
+    NAME,
+    RESET_OPTIONS,
+    clarify_message,
+    field_for,
+    next_slot,
+    opening_message,
+    question_message,
+)
 from .agent.graph import RESUME_OPTIONS
 from .agent.state import FIELD_LABELS, REQUIRED_FIELDS, SUMMARY_LABELS, application_fields
 from .commands import match_command
@@ -339,12 +349,28 @@ class ChatService:
                 raise ReviewError("This application is with an underwriter and can't be restarted yet.")
             await self._clear(config)
 
+    async def start(self, conversation_id: str, tenant_id: str | None = None) -> AIMessage:
+        """Fresh application with the opening message (Telegram /start)."""
+        config = {"configurable": {"thread_id": conversation_id}}
+        async with self.locks.hold(conversation_id):
+            snapshot = await self.graph.aget_state(config)
+            if snapshot.interrupts:
+                raise ReviewError("This application is with an underwriter and can't be restarted yet.")
+            lender = get_tenant(snapshot.values.get("tenant_id") or tenant_id).name
+            reply = opening_message(lender)
+            await self._clear(config, keep=[reply])
+            await self.graph.aupdate_state(config, {"pending_slot": NAME, "greeted": True,
+                                                    "tenant_id": snapshot.values.get("tenant_id") or tenant_id
+                                                    or DEFAULT_TENANT}, as_node="interviewer")
+            return reply
+
     async def _clear(self, config: dict[str, Any], keep: list[BaseMessage] | None = None) -> None:
         cleared: dict[str, Any] = {f: None for f in [*REQUIRED_FIELDS, "loan_percent_income", "assessment",
                                                      "final_decision", "application_id", "applicant_question",
                                                      "pending_slot"]}
         await self.graph.aupdate_state(
             config, {**cleared, "details_confirmed": False, "stalled_turns": 0, "slot_attempts": {}, "deferred": [],
+                     "greeted": False, "reset_pending": False, "person_name": None, "number_style": None,
                      "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *(keep or [])]},
             as_node="interviewer",
         )
@@ -355,11 +381,22 @@ class ChatService:
         record_command(name)
         updates: dict[str, Any] = {}
         decided = bool(values.get("final_decision"))
-        if name == "start_over":
-            reply = question_message({}, prefix="Okay, let's start again.")
+        answered = sum(values.get(f) is not None for f in REQUIRED_FIELDS)
+        if name == "start_over" and answered and not decided and not values.get("reset_pending"):
+            # Don't throw away someone's answers on one message: ask first
+            reply = AIMessage(f"Start a new application? This clears the {answered} answer"
+                              f"{'' if answered == 1 else 's'} you've given so far.",
+                              response_metadata={"options": RESET_OPTIONS})
+            updates["reset_pending"] = True
+        elif name in ("start_over", "confirm_reset"):
+            reply = opening_message(lender, prefix="Okay, let's start again.")
             await self._clear(config, keep=[HumanMessage(text), reply])
+            await self.graph.aupdate_state(config, {"pending_slot": NAME, "greeted": True}, as_node="interviewer")
             return reply
-        if name == "clarify":
+        elif name == "continue":
+            updates["reset_pending"] = False
+            reply = question_message(values, prefix="Okay, let's carry on.")
+        elif name == "clarify":
             reply = clarify_message(values)
         elif name == "frustrated":
             collected = application_fields(values)
@@ -394,6 +431,9 @@ class ChatService:
         elif decided and name in ("skip", "change", "apply"):
             reply = AIMessage("Your application has already been decided. Tap Start over to begin a new one.",
                               response_metadata={"options": ["Start over"]})
+        elif name == "skip" and values.get("pending_slot") == NAME:
+            updates["pending_slot"] = next_slot(values)
+            reply = question_message(values, prefix="No problem. Let's start.")
         elif name == "skip":
             slot = values.get("pending_slot")
             if slot in REQUIRED_FIELDS:

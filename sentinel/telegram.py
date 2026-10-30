@@ -12,11 +12,6 @@ from .service import ChatService, ReviewError
 
 logger = logging.getLogger(__name__)
 
-WELCOME = (
-    "Welcome to Sentinel, your automated loan underwriter.\n"
-    "I'll ask a few questions, run your application through our credit model, and explain the result.\n"
-    "Send /start any time to begin a fresh application. Let's begin: what is your name?"
-)
 
 
 class TelegramAdapter:
@@ -57,11 +52,11 @@ class TelegramAdapter:
         conversation_id = f"tg-{chat_id}"
         if text.startswith("/start"):
             try:
-                await self.service.reset(conversation_id)
+                opening = await self.service.start(conversation_id)
             except ReviewError as e:
                 await self.send(chat_id, str(e))
                 return
-            await self.send(chat_id, WELCOME)
+            await self.send(chat_id, str(opening.content), options=opening.response_metadata.get("options"))
             return
 
         typing = asyncio.create_task(self.call("sendChatAction", chat_id=chat_id, action="typing"))

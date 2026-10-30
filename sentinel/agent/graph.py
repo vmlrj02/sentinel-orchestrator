@@ -37,7 +37,22 @@ from ..rag import Retriever
 from ..scoring.model import Scorer, get_credit_model
 from ..store import ApplicationRecord, ApplicationStore, now
 from ..tenants import get_tenant, max_approvable_loan
-from .dialogue import CHANGE_OPTIONS, CONFIRM, ESCAPES, MAX_AMOUNT, next_slot, question_message, understand
+from .dialogue import (
+    CHANGE_OPTIONS,
+    CONFIRM,
+    ESCAPES,
+    MAX_AMOUNT,
+    NAME,
+    acknowledge,
+    fmt_amount,
+    is_greeting,
+    next_slot,
+    number_style,
+    opening_message,
+    question_message,
+    safe_lead,
+    understand,
+)
 from .llm import AgentLLM
 from .state import (
     FIELD_LABELS,
@@ -97,14 +112,13 @@ def route_after_advisor(state: AgentState) -> str:
 
 
 def summary_message(state: Mapping[str, Any]) -> str:
-    lines = [f"- {SUMMARY_LABELS[f]}: {_fmt(state[f])}" for f in REQUIRED_FIELDS]
-    return (
-        "Here's your application:\n" + "\n".join(lines)
-        + "\n\nPlease confirm if these details are correct (Yes/No), or tell me what to change."
-    )
+    lines = [f"- {SUMMARY_LABELS[f]}: {_fmt(f, state[f], state.get('number_style'))}" for f in REQUIRED_FIELDS]
+    return "That's everything. Please check your details:\n" + "\n".join(lines) + "\n\nIs everything correct?"
 
 
-def _fmt(value: Any) -> str:
+def _fmt(field: str, value: Any, style: str | None = None) -> str:
+    if field in ("person_income", "loan_amnt") and isinstance(value, (int, float)):
+        return fmt_amount(value, style)
     if isinstance(value, float) and value.is_integer():
         return f"{int(value):,}"
     if isinstance(value, (int, float)):
@@ -112,7 +126,7 @@ def _fmt(value: Any) -> str:
     named = {"Y": "Yes", "N": "No", "HOMEIMPROVEMENT": "Home improvement", "DEBTCONSOLIDATION": "Debt consolidation"}
     if value in named:
         return named[value]
-    # Enum values (RENT, MEDICAL) read better capitalised; free text like names stays as typed
+    # Enum values (RENT, MEDICAL) read better capitalised; free text stays as typed
     return str(value).capitalize() if str(value).isupper() else str(value)
 
 
@@ -136,7 +150,8 @@ _PLAIN_YES = re.compile(
     r"^\s*(yes|yep|yeah|yup|y|correct|confirm(ed)?|that'?s (right|correct)|all (good|correct)|looks (good|right))"
     r"([\s,.!]+(it is|that'?s (right|correct|all)|all correct|correct|thanks?|please|now))*[\s.!]*$", re.I)
 
-_PLAIN_NO = re.compile(r"^\s*(no|nope|nah|not quite|not correct|incorrect|wrong)\b[\s,.!]*$", re.I)
+_PLAIN_NO = re.compile(r"^\s*(no|nope|nah|not quite|not correct|incorrect|wrong)\b[\s,.!]*"
+                       r"(change something|something'?s wrong)?[\s.!]*$", re.I)
 
 _CITATION = re.compile(r"\s?\[([a-z0-9_-]+/[a-z0-9_.-]+(?:#[a-z0-9-]+)?)\]")
 
@@ -173,67 +188,84 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
     policy_tools = [t for t in tools if t.name == "search_policy"]
 
     async def interviewer(state: AgentState) -> dict[str, Any]:
-        """Fills the pending slot from the latest message, then asks the next question.
+        """Reads the latest message, updates the application, and composes the reply.
 
-        Fast path first: short answers to the pending slot ("rent", "12k", "B", "no") are parsed in code
-        with no LLM call. Anything else goes to the LLM for understanding only; replies come from code.
+        Code decides what happens next and writes the question, progress and options. The LLM (only called
+        when code can't read the message) understands the message and writes the opening `lead` line, which
+        is checked by `safe_lead` before use. Greetings and short answers never reach the LLM.
         """
         text = str(state["messages"][-1].content)
         tenant = get_tenant(state.get("tenant_id"))
         slot = state.get("pending_slot") or next_slot(state)
         attempts = dict(state.get("slot_attempts") or {})
-        updates: dict[str, Any] = {}
-        question = out_of_scope = None
+        style = number_style(text, state.get("number_style"))
+        updates: dict[str, Any] = {"number_style": style, "greeted": True}
+        question = out_of_scope = lead = None
+        process = False
         path = "filled_fast"
+
+        # First message: a greeting gets the opening, which explains what will happen and asks for a name
+        if not state.get("greeted") and is_greeting(text):
+            record_slot(NAME, "opening")
+            return {**updates, "pending_slot": NAME, "messages": [opening_message(tenant.name)]}
 
         if slot == CONFIRM and _PLAIN_YES.match(text):
             updates["details_confirmed"] = True
             record_slot(CONFIRM, "filled_fast")
         elif slot == CONFIRM and _PLAIN_NO.match(text):
             record_slot(CONFIRM, "declined")
-            return {"pending_slot": CONFIRM, "messages": [AIMessage(
+            return {**updates, "pending_slot": CONFIRM, "messages": [AIMessage(
                 "No problem. What would you like to change? You can just tell me the right value.",
                 response_metadata={"options": CHANGE_OPTIONS})]}
         elif (value := understand(slot, text)) == MAX_AMOUNT:
-            # "The most you can give": never quote or pre-fill an amount before assessment, that would imply
-            # the applicant qualifies for something
+            # Never quote or pre-fill an amount before assessment: that would imply they qualify for something
             record_slot(slot, "reask")
-            return {"pending_slot": slot, "messages": [AIMessage(
-                "I can't say what you'd qualify for until your application has been assessed. Tell me the amount "
-                "you need, and you'll get a decision at the end.\n\nHow much would you like to borrow?")]}
+            return {**updates, "pending_slot": slot, "messages": [question_message(
+                state, slot=slot,
+                prefix="I can't say what you'd qualify for until your application has been assessed. "
+                       "Tell me the amount you need, and you'll get a decision at the end.")]}
+        elif slot == NAME and value is not None:
+            record_slot(NAME, "filled_fast")
+            merged = {**state, "person_name": value}
+            return {**updates, "person_name": value, "pending_slot": next_slot(merged),
+                    "messages": [question_message(merged, prefix=f"Nice to meet you, {value}. Let's start.")]}
         elif value is not None:
             updates[slot] = value
         else:
             missing = missing_fields(state)
             collected = application_fields(state)
             system = interviewer_prompt.render(
+                lender=tenant.name, review_sla=tenant.review_sla,
                 collected=json.dumps(collected) if collected else "nothing yet",
                 missing=str([f"{f} ({FIELD_LABELS[f]})" for f in missing]),
-                asking=FIELD_LABELS.get(slot, "confirmation of the summary"),
+                asking="what to call them (optional)" if slot == NAME
+                else FIELD_LABELS.get(slot, "confirmation of the summary"),
+                name=state.get("person_name") or "not given",
             )
             path = "filled_llm"
             result = await llm.interview([SystemMessage(system),
                                           *_dialogue(_recent(state["messages"], INTERVIEWER_WINDOW))])
             # exclude_none so a turn that mentions nothing new doesn't wipe stored values
-            updates = {k: v for k, v in result.model_dump(exclude_none=True).items()
-                       if k in REQUIRED_FIELDS or k == "details_confirmed"}
+            updates.update({k: v for k, v in result.model_dump(exclude_none=True).items()
+                            if k in REQUIRED_FIELDS or k in ("details_confirmed", "person_name")})
             question, out_of_scope = result.applicant_question, result.out_of_scope
+            process, lead = bool(result.process_question), safe_lead(result.lead)
             # A bare number the LLM didn't place answers the question that was asked
-            if slot in NUMERIC_FIELDS and not updates and not question and not out_of_scope:
-                if (number := parse_number(text)) is not None:
-                    updates[slot] = number
+            if slot in NUMERIC_FIELDS and not any(f in updates for f in REQUIRED_FIELDS) \
+                    and not question and not out_of_scope and (number := parse_number(text)) is not None:
+                updates[slot] = number
 
         updates, range_error = validate(updates, tenant)
-        for field in updates:
-            if field in REQUIRED_FIELDS:
-                record_slot(field, path)
+        filled = {f: updates[f] for f in REQUIRED_FIELDS if f in updates}
+        for field in filled:
+            record_slot(field, path)
         income = updates.get("person_income") or state.get("person_income")
         loan = updates.get("loan_amnt") or state.get("loan_amnt")
         if income and loan and income > 0:
             updates["loan_percent_income"] = round(loan / income, 2)
 
         # A correction after the summary was shown needs a fresh confirmation
-        changed = any(state.get(f) != updates[f] for f in REQUIRED_FIELDS if f in updates)
+        changed = any(state.get(f) != v for f, v in filled.items())
         if slot == CONFIRM and changed:
             updates["details_confirmed"] = False
         elif slot == CONFIRM and _PLAIN_YES.match(text):
@@ -241,26 +273,30 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         if updates.get("details_confirmed"):
             record_funnel("confirmed")
 
-        # Progress = a new or changed detail, a confirmation, or a real question. Turns without progress
-        # are counted so the service can stop spending tokens on a conversation that is going nowhere.
-        progress = changed or bool(question) or bool(updates.get("details_confirmed"))
+        # Progress = a new or changed detail, a confirmation, or a real question (about policy or the process).
+        # Turns without progress are counted so the service can stop spending tokens on a stuck conversation.
+        progress = changed or bool(question) or process or bool(updates.get("details_confirmed")) \
+            or bool(updates.get("person_name") and updates.get("person_name") != state.get("person_name"))
         updates["stalled_turns"] = 0 if progress else state.get("stalled_turns", 0) + 1
         updates["applicant_question"] = question
         merged = {**state, **updates}
         updates["deferred"] = [f for f in (state.get("deferred") or []) if merged.get(f) is None]
         merged["deferred"] = updates["deferred"]
+        intro = "" if state.get("greeted") else f"Hi! I'm Sentinel, {tenant.name}'s loan assistant. "
 
         if range_error or (not progress and not out_of_scope):
-            # The answer didn't fit: re-ask with what's expected, and after two misses offer a way out
-            attempts[slot] = attempts.get(slot, 0) + 1
-            record_slot(slot, "invalid" if range_error else "reask")
+            # The answer didn't fit: re-ask, worded differently each time, offering a way out from the third miss
+            repair_slot = slot if slot != NAME else next_slot(merged)
+            attempts[repair_slot] = attempts.get(repair_slot, 0) + 1
+            record_slot(repair_slot, "invalid" if range_error else "reask")
             updates["slot_attempts"] = attempts
             updates["pending_slot"] = next_slot(merged)
             if range_error:
-                options = ESCAPES if attempts[slot] >= 2 else []
+                options = ESCAPES if attempts[repair_slot] >= 3 else []
                 message = AIMessage(range_error, response_metadata={"options": options} if options else {})
             else:
-                message = question_message(merged, attempt=attempts[slot])
+                apology = "Sorry, I didn't quite get that." if attempts[repair_slot] == 1 else ""
+                message = question_message(merged, prefix=intro + (lead or apology), attempt=attempts[repair_slot])
             return {**updates, "messages": [message]}
         if out_of_scope and not progress:
             return {**updates, "messages": [out_of_scope_message(tenant.name)]}
@@ -274,7 +310,8 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             return updates  # the advisor answers, then the next question is appended
         if updates["pending_slot"] == CONFIRM and slot != CONFIRM:
             record_funnel("summary_shown")
-        return {**updates, "messages": [question_message(merged)]}
+        prefix = intro + (lead or (acknowledge(filled, style) if filled else "Thanks."))
+        return {**updates, "messages": [question_message(merged, prefix=prefix)]}
 
     async def scoring(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         """Scores the confirmed application, applies the lender's policy, and records the decision."""
@@ -374,6 +411,8 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             follow_up = question_message(dict(state), prefix="")
             message = AIMessage(f"{message.content}\n\n{follow_up.content}",
                                 response_metadata=follow_up.response_metadata)
+        if final and final.get("explain") and isinstance(message, AIMessage) and not message.tool_calls:
+            message = AIMessage(f"Reference: {state.get('application_id')}\n\n{message.content}")
         updates: dict[str, Any] = {"messages": [message], "applicant_question": None}
         if final and final.get("explain") and not getattr(message, "tool_calls", None):
             updates["final_decision"] = {**final, "explain": False}

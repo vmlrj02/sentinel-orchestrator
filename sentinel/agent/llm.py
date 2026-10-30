@@ -81,6 +81,9 @@ class FakeAgentLLM:
         fields: dict[str, Any] = {k: v for k, v in _PAIR.findall(text) if k in REQUIRED_FIELDS}
         if _YES.match(text):
             fields["details_confirmed"] = True
+        if "process:" in text:
+            fields["process_question"] = True
+            fields["lead"] = "Fake answer about the process."
         if "outofscope:" in text:
             fields["out_of_scope"] = True
         if "question:" in text:

@@ -28,7 +28,7 @@ async def test_short_answers_cost_no_llm_calls(service, fake_llm):
     calls = fake_llm.calls
     for answer in ["I rent", "12k", "11.5%", "for my degree", "B", "5 years", "never"]:
         result = await service.run_turn("fast", "u", answer, "t")
-    assert result.messages[-1].startswith("Here's your application:")
+    assert result.messages[-1].startswith("That's everything. Please check your details:")
     assert fake_llm.calls == calls  # seven answers, zero LLM calls
 
     result = await service.run_turn("fast", "u", "Yes", "t")
@@ -38,24 +38,27 @@ async def test_short_answers_cost_no_llm_calls(service, fake_llm):
 
 async def test_repair_then_escalation(service):
     first = await service.run_turn("rep", "u", "abc", "t")  # asked: age
-    assert first.messages[-1] == ("Sorry, I didn't catch that. How old are you?\n\n"
-                                  "Please answer with a number of years, like 32.")
-    await service.run_turn("rep", "u", "abc", "t")
+    assert first.messages[-1] == ("Hi! I'm Sentinel, Aster Bank's loan assistant. Sorry, I didn't quite get that."
+                                  "\n\n(1 of 10) How old are you?\n\nFor example: 32.")
+    second = await service.run_turn("rep", "u", "abc", "t")
+    assert second.messages[-1].startswith("Let me put it another way: I need your age in years")
     events = [e async for e in service.stream_turn("rep", "u", "still abc", "t")]
     message = next(e for e in events if e["type"] == "message")
-    assert "skip this for now, start over, or ask to talk to a person" in message["text"]
+    assert message["text"].startswith("We seem to be stuck on this one.")
     assert message["options"] == ["Skip for now", "Start over", "Talk to a person"]
+    assert len({first.messages[-1], second.messages[-1], message["text"]}) == 3  # never the same line twice
 
 
 async def test_skip_defers_a_question_until_the_end(service):
     await service.run_turn("skip", "u", START, "t")  # asked: home
     skipped = await service.run_turn("skip", "u", "Skip for now", "t")
-    assert skipped.messages[-1].startswith("No problem, we'll come back to that. How much would you like to borrow?")
+    assert skipped.messages[-1] == ("No problem, we'll come back to that.\n\n"
+                                    "(4 of 10) How much would you like to borrow?")
     for answer in ["12k", "11.5", "education", "B", "5", "no"]:
         result = await service.run_turn("skip", "u", answer, "t")
     assert "To finish your application I still need this: do you rent or own your home?" in result.messages[-1]
     result = await service.run_turn("skip", "u", "rent", "t")
-    assert result.messages[-1].startswith("Here's your application:")
+    assert result.messages[-1].startswith("That's everything.")
 
 
 async def test_commands_are_answered_without_the_llm(service, fake_llm):
@@ -64,15 +67,18 @@ async def test_commands_are_answered_without_the_llm(service, fake_llm):
     summary = await service.run_turn("cmd", "u", "what do you have so far?", "t")
     assert "Annual income: 50000" in summary.messages[-1] and "Still needed:" in summary.messages[-1]
     change = await service.run_turn("cmd", "u", "change my income", "t")
-    assert change.messages[-1] == "Sure. What is your annual income?"
+    assert change.messages[-1].startswith("Sure.\n\n(3 of 10) What is your annual income?")
     await service.run_turn("cmd", "u", "60k", "t")
     state = await service.get_state("cmd")
     assert state["application"]["person_income"] == 60_000
     human = await service.run_turn("cmd", "u", "talk to a person", "t")
     assert "contact Aster Bank's loan team" in human.messages[-1]
     assert "start over" in (await service.run_turn("cmd", "u", "help", "t")).messages[-1]
-    restarted = await service.run_turn("cmd", "u", "Start over", "t")
-    assert restarted.messages[-1] == "Okay, let's start again. How old are you?"
+    confirm = await service.run_turn("cmd", "u", "Start over", "t")  # answers would be lost: ask first
+    assert confirm.messages[-1].startswith("Start a new application? This clears the 3 answers")
+    assert confirm.options == ["Yes, start over", "No, continue"]
+    restarted = await service.run_turn("cmd", "u", "Yes, start over", "t")
+    assert restarted.messages[-1].startswith("Okay, let's start again. I'll ask you 10 quick questions")
     assert (await service.get_state("cmd"))["application"] == {}
     assert fake_llm.calls == calls  # every command above was free
 
@@ -136,7 +142,8 @@ async def test_asking_for_the_maximum_does_not_promise_an_amount(service, fake_l
     calls = fake_llm.calls
     result = await service.run_turn(cid, "u", text, "t")
     assert result.messages[-1].startswith("I can't say what you'd qualify for until your application has been")
-    assert not any(ch.isdigit() for ch in result.messages[-1])  # no amount quoted
+    import re
+    assert not re.search(r"\d{3,}|lakh", result.messages[-1])  # no amount quoted
     assert "loan_amnt" not in (await service.get_state(cid))["application"]
     assert fake_llm.calls == calls
 

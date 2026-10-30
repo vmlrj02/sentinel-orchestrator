@@ -80,6 +80,9 @@ class AgentState(TypedDict, total=False):
     pending_slot: Optional[str]            # the detail the last question asked for ("confirm" at the summary)
     slot_attempts: dict[str, int]          # failed answers per slot, for repair and escalation
     deferred: list[str]                    # slots the applicant chose to skip for now (asked last)
+    greeted: bool                          # the opening message has been shown
+    number_style: Optional[str]            # "indian" once they write lakh/crore: amounts are read back their way
+    reset_pending: bool                    # "start over" asked; waiting for them to confirm
     application_id: Optional[str]
     assessment: Optional[dict[str, Any]]   # {"model": credit model output, "policy_decision", "policy_reason"}
     final_decision: Optional[dict[str, Any]]  # {"decision", "decided_by", "note"}
@@ -87,8 +90,18 @@ class AgentState(TypedDict, total=False):
 
 
 class SentinelResponse(BaseModel):
-    """What the applicant's latest message says. The reply itself is written by code, not the LLM."""
-    person_name: Optional[str] = None
+    """What the applicant's latest message says, plus the opening line of the reply (the app adds the rest)."""
+    lead: Optional[str] = Field(
+        None,
+        description="One or two short sentences (max 40 words) responding to what the applicant just said: "
+                    "acknowledge, answer a question about the process from FACTS, or apologise. Never a question.",
+    )
+    process_question: Optional[bool] = Field(
+        None,
+        description="True if they asked about this chat or process (why a detail is needed, their name, how long, "
+                    "what happens next, their data, whether you are a bot). Answer it in lead.",
+    )
+    person_name: Optional[str] = Field(None, description="What to call them, if they said")
     person_age: Optional[int] = Field(None, description="Age in years")
     person_income: Optional[float] = Field(None, description="Annual income")
     person_emp_length: Optional[float] = Field(None, description="Years in current employment")
@@ -127,4 +140,5 @@ def ready_for_scoring(state: Mapping[str, Any]) -> bool:
 
 
 def application_fields(state: Mapping[str, Any]) -> dict[str, Any]:
-    return {f: state.get(f) for f in [*REQUIRED_FIELDS, "loan_percent_income"] if state.get(f) is not None}
+    keys = ["person_name", *REQUIRED_FIELDS, "loan_percent_income"]  # name: for display, never for the decision
+    return {f: state.get(f) for f in keys if state.get(f) is not None}

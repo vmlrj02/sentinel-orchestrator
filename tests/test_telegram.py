@@ -1,4 +1,4 @@
-from sentinel.telegram import WELCOME, TelegramAdapter
+from sentinel.telegram import TelegramAdapter
 from tests.conftest import APPLICATION_TURNS
 
 
@@ -30,7 +30,9 @@ async def test_start_resets_and_welcomes(service):
     adapter, sent = make_adapter(service)
     await adapter.handle_update(update(1, "person_age=30"))
     await adapter.handle_update(update(2, "/start"))
-    assert sent[-1] == ("sendMessage", {"chat_id": 42, "text": WELCOME})
+    method, params = sent[-1]
+    assert method == "sendMessage" and params["text"].startswith("Hi! I'm Sentinel, Aster Bank's loan assistant.")
+    assert params["reply_markup"]["keyboard"] == [[{"text": "Skip"}]]
     assert (await service.get_state("tg-42"))["application"] == {}
 
 

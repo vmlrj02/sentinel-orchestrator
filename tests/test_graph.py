@@ -31,7 +31,7 @@ def test_summary_lists_every_field_readably():
 async def test_full_application_shows_summary_then_scores_on_yes(service):
     for text in APPLICATION_TURNS:
         result = await service.run_turn("c1", "u1", text, "test")
-    assert result.messages[-1].startswith("Here's your application:")
+    assert result.messages[-1].startswith("That's everything. Please check your details:")
     assert result.assessment is None  # nothing is scored before the applicant confirms
 
     result = await service.run_turn("c1", "u1", "yes", "test")
@@ -80,14 +80,15 @@ async def test_choice_questions_list_their_options(service):
                                                    "t")]
     message = next(e for e in events if e["type"] == "message")
     assert message["options"] == CHOICES["person_home_ownership"]
-    assert message["text"] == ("Thanks. Do you rent or own your home?\n\n"
+    assert message["text"] == ("Hi! I'm Sentinel, Aster Bank's loan assistant. Thanks, I've noted your age, income "
+                               "and years at your job.\n\n(4 of 10) Do you rent or own your home?\n\n"
                                "Please reply with one of: Rent, Own, Mortgage or Other.")
     state = await service.get_state("o")
     assert state["messages"][-1]["options"] == CHOICES["person_home_ownership"]  # survives a page reload
 
 
 async def test_free_text_questions_have_no_options(service):
-    events = [e async for e in service.stream_turn("f", "u", "hello", "t")]
+    events = [e async for e in service.stream_turn("f", "u", "tell me more", "t")]
     message = next(e for e in events if e["type"] == "message")
     assert message["options"] == [] and "reply with one of" not in message["text"]
 

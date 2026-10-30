@@ -2,6 +2,8 @@
 import re
 
 _COMMANDS = [
+    ("confirm_reset", r"(yes,? (start over|clear (it|everything)|start again))"),
+    ("continue", r"(no,? (continue|carry on|keep going)|continue|carry on|keep going)"),
     ("start_over", r"(start (over|again)|restart|reset|cancel( (my )?application)?|new application)"),
     ("help", r"(help|\?|what can you (do|help with)|how does this work)"),
     ("summary", r"(what (do you have|have i (told|given) you)( so far)?|show (me )?(my )?(details|application|"

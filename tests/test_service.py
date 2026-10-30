@@ -42,13 +42,13 @@ async def test_same_conversation_turns_are_serialised(settings):
 async def test_concurrency_cap_queues_extra_turns(settings):
     service = make_service(dataclasses.replace(settings, max_concurrent_turns=2), FakeAgentLLM(latency_ms=100))
     started = time.perf_counter()
-    await asyncio.gather(*(service.run_turn(f"c{i}", f"u{i}", "hi", "test") for i in range(6)))
+    await asyncio.gather(*(service.run_turn(f"c{i}", f"u{i}", "tell me more", "test") for i in range(6)))
     assert time.perf_counter() - started >= 0.3  # 6 turns through 2 slots = 3 waves of 100ms
 
 
 async def test_turn_timeout_returns_error(settings):
     service = make_service(dataclasses.replace(settings, turn_timeout_s=0.05), FakeAgentLLM(latency_ms=500))
-    result = await service.run_turn("c", "u", "hi", "test")
+    result = await service.run_turn("c", "u", "tell me more", "test")  # greetings never reach the LLM
     assert result.error == "timeout"
 
 
@@ -79,7 +79,7 @@ async def test_provider_outage_is_reported_clearly(service, fake_llm, monkeypatc
         raise RateLimitError("You have no credits remaining", response=response, body=None)
 
     monkeypatch.setattr(fake_llm, "interview", out_of_quota)
-    result = await service.run_turn("c", "u", "hello", "test")
+    result = await service.run_turn("c", "u", "tell me more", "test")
     assert result.error == "llm_unavailable" and "temporarily unavailable" in result.messages[0]
 
 
