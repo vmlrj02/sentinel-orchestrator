@@ -26,6 +26,7 @@ def test_policy_thresholds_match_policy_documents():
     assert "below 30%" in aster and "above 60%" in aster and "40% of your gross annual income" in aster
     assert "below 40%" in kestrel and "above 70%" in kestrel and "50% of your gross annual income" in kestrel
     assert "$20,000" in aster and "$15,000" in kestrel
+    assert "from $1,000 to $40,000" in aster and "from $500 to $30,000" in kestrel  # min_loan / max_loan
 
 
 def test_retrieval_is_tenant_scoped():

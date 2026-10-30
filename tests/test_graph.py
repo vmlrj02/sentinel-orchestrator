@@ -90,3 +90,30 @@ async def test_free_text_questions_have_no_options(service):
     events = [e async for e in service.stream_turn("f", "u", "hello", "t")]
     message = next(e for e in events if e["type"] == "message")
     assert message["options"] == [] and "reply with one of" not in message["text"]
+
+
+def test_parse_number():
+    from sentinel.agent.validation import parse_number
+    cases = {"1": 1, "12k": 12_000, "12,000": 12_000, "11.5%": 11.5, "8 lakhs": 800_000, "$5000": 5_000,
+             "4 years": 4, "-10000": -10_000, "₹ 2.5 lakh": 250_000}
+    for text, expected in cases.items():
+        assert parse_number(text) == expected, text
+    for text in ["idk", "how much ever you can give", "12 or 13", "age 30 and income 5000"]:
+        assert parse_number(text) is None, text
+
+
+async def test_bare_number_fills_the_question_that_was_asked(service):
+    await service.run_turn("bn", "u", "person_age=30 person_income=50000 person_emp_length=3", "t")
+    await service.run_turn("bn", "u", "person_home_ownership=RENT", "t")
+    await service.run_turn("bn", "u", "5000", "t")  # asked: loan amount
+    await service.run_turn("bn", "u", "1", "t")  # asked: interest rate
+    application = (await service.get_state("bn"))["application"]
+    assert application["loan_amnt"] == 5000 and application["loan_int_rate"] == 1
+
+
+async def test_out_of_policy_loan_amount_is_rejected_with_the_range(service):
+    await service.run_turn("lim", "u", "person_age=30 person_income=50000 person_emp_length=3", "t")
+    await service.run_turn("lim", "u", "person_home_ownership=RENT", "t")
+    result = await service.run_turn("lim", "u", "1", "t")
+    assert result.messages[-1] == "Aster Bank lends between 1,000 and 40,000. How much would you like to borrow?"
+    assert "loan_amnt" not in (await service.get_state("lim"))["application"]

@@ -18,6 +18,8 @@ class Tenant:
     auto_limit: float           # loans above this always go to a human
     max_loan_to_income: float   # hard policy limit, regardless of model score
     review_sla: str
+    min_loan: float = 1_000
+    max_loan: float = 40_000
 
     def decide(self, probability: float, application: dict[str, Any]) -> tuple[Decision, str]:
         """Policy decision from the model's default probability. Returns (decision, reason)."""
@@ -54,9 +56,9 @@ def max_approvable_loan(tenant: Tenant, application: dict[str, Any],
 
 TENANTS: dict[str, Tenant] = {
     "aster": Tenant("aster", "Aster Bank", approve_below=0.30, decline_above=0.60, auto_limit=20_000,
-                    max_loan_to_income=0.40, review_sla="2 business days"),
+                    max_loan_to_income=0.40, review_sla="2 business days", min_loan=1_000, max_loan=40_000),
     "kestrel": Tenant("kestrel", "Kestrel Credit Union", approve_below=0.40, decline_above=0.70, auto_limit=15_000,
-                      max_loan_to_income=0.50, review_sla="1 business day"),
+                      max_loan_to_income=0.50, review_sla="1 business day", min_loan=500, max_loan=30_000),
 }
 DEFAULT_TENANT = "aster"
 

@@ -49,6 +49,7 @@ from .state import (
     ready_for_scoring,
 )
 from .tools import make_tools
+from .validation import NUMERIC_FIELDS, parse_number, validate
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,16 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         chat_text = updates.pop("assistant_message")
         updates["applicant_question"] = result.applicant_question
 
+        # A bare number answers the question that was asked; ranges are checked against lender policy
+        tenant = get_tenant(state.get("tenant_id"))
+        asked = missing[0] if missing else None
+        if (asked in NUMERIC_FIELDS and not any(f in updates for f in REQUIRED_FIELDS)
+                and not result.applicant_question and not result.out_of_scope):
+            number = parse_number(str(state["messages"][-1].content))
+            if number is not None:
+                updates[asked] = number
+        updates, range_error = validate(updates, tenant)
+
         income = updates.get("person_income") or state.get("person_income")
         loan = updates.get("loan_amnt") or state.get("loan_amnt")
         if income and loan and income > 0:
@@ -226,6 +237,8 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         updates.pop("person_name", None)  # not collected: the decision doesn't use it
 
         merged = {**state, **updates}
+        if range_error:
+            return {**updates, "messages": [AIMessage(range_error)]}
         if result.out_of_scope and not progress:
             return {**updates, "messages": [out_of_scope_message(get_tenant(state.get("tenant_id")).name)]}
         if ready_for_scoring(merged):
