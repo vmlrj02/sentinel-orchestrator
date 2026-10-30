@@ -210,7 +210,8 @@ class ChatService:
                                 continue
                             for message in (update or {}).get("messages", []):
                                 if isinstance(message, AIMessage) and message.content:
-                                    yield {"type": "message", "text": message.content, "node": node}
+                                    yield {"type": "message", "text": message.content, "node": node,
+                                           "options": message.response_metadata.get("options", [])}
             finally:
                 IN_FLIGHT.dec()
 
@@ -274,7 +275,8 @@ class ChatService:
             "missing": missing,
             "assessment": values.get("assessment"),
             "final_decision": values.get("final_decision"),
-            "messages": [{"role": "user" if isinstance(m, HumanMessage) else "assistant", "text": m.content}
+            "messages": [{"role": "user" if isinstance(m, HumanMessage) else "assistant", "text": m.content,
+                          "options": getattr(m, "response_metadata", {}).get("options", [])}
                          for m in values.get("messages", [])
                          if isinstance(m, HumanMessage) or (isinstance(m, AIMessage) and m.content)],
         }

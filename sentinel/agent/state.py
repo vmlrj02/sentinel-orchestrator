@@ -27,6 +27,14 @@ FIELD_LABELS = {
     "cb_person_default_on_file": "whether they have ever defaulted before",
 }
 
+# Fields with a fixed set of answers: the question always lists them, and the UI offers them as buttons
+CHOICES = {
+    "person_home_ownership": ["Rent", "Own", "Mortgage", "Other"],
+    "loan_intent": ["Personal", "Education", "Medical", "Venture", "Home improvement", "Debt consolidation"],
+    "loan_grade": ["A", "B", "C", "D", "E", "F", "G"],
+    "cb_person_default_on_file": ["Yes", "No"],
+}
+
 # Labels for the confirmation summary shown to the applicant
 SUMMARY_LABELS = {
     "person_name": "Name", "person_age": "Age", "person_income": "Annual income",

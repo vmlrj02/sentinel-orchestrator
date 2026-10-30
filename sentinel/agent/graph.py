@@ -38,6 +38,7 @@ from ..store import ApplicationRecord, ApplicationStore, now
 from ..tenants import get_tenant, max_approvable_loan
 from .llm import AgentLLM
 from .state import (
+    CHOICES,
     FIELD_LABELS,
     REQUIRED_FIELDS,
     SUMMARY_LABELS,
@@ -100,6 +101,21 @@ def _fmt(value: Any) -> str:
         return named[value]
     # Enum values (RENT, MEDICAL) read better capitalised; free text like names stays as typed
     return str(value).capitalize() if str(value).isupper() else str(value)
+
+
+def with_choices(text: str, state: dict[str, Any]) -> AIMessage:
+    """Reply asking for the next detail. If that detail has fixed answers, say so explicitly and attach
+    them as quick replies. Done in code so it never depends on the LLM remembering to list them."""
+    missing = missing_fields(state)
+    if not missing:
+        options = ["Yes", "No"]  # the confirmation summary
+    elif missing[0] in CHOICES:
+        options = CHOICES[missing[0]]
+        listed = ", ".join(options[:-1]) + f" or {options[-1]}"
+        text = f"{text.rstrip()}\n\nPlease reply with one of: {listed}."
+    else:
+        options = []
+    return AIMessage(text, response_metadata={"options": options} if options else {})
 
 
 def _recent(messages: list[BaseMessage], limit: int) -> list[BaseMessage]:
@@ -193,7 +209,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         # The summary is built here, not by the LLM, so the user always sees exactly what will be scored
         if not missing_fields(merged):
             chat_text = summary_message(merged)
-        return {**updates, "messages": [AIMessage(chat_text)]}
+        return {**updates, "messages": [with_choices(chat_text, merged)]}
 
     async def scoring(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         """Scores the confirmed application, applies the lender's policy, and records the decision."""
@@ -290,6 +306,8 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
                                                           state["messages"])
             for call in message.tool_calls:
                 writer({"type": "tool_call", "name": call["name"], "args": call["args"]})
+        if not final and isinstance(message, AIMessage) and not message.tool_calls:
+            message = with_choices(str(message.content), dict(state))  # it ends by asking for the next detail
         updates: dict[str, Any] = {"messages": [message], "applicant_question": None}
         if final and final.get("explain") and not getattr(message, "tool_calls", None):
             updates["final_decision"] = {**final, "explain": False}

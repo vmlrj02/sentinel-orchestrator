@@ -72,3 +72,21 @@ def test_plain_yes_patterns():
         assert _PLAIN_YES.match(text), text
     for text in ["yes but change the amount to 10000", "no", "not quite, income is 34000", "yes?? why grade E"]:
         assert not _PLAIN_YES.match(text), text
+
+
+
+async def test_choice_questions_list_their_options(service):
+    from sentinel.agent.state import CHOICES
+    await service.run_turn("o", "u", "person_name=Ann person_age=30 person_income=50000 person_emp_length=3", "t")
+    events = [e async for e in service.stream_turn("o", "u", "hello", "t")]
+    message = next(e for e in events if e["type"] == "message")
+    assert message["options"] == CHOICES["person_home_ownership"]
+    assert message["text"].endswith("Please reply with one of: Rent, Own, Mortgage or Other.")
+    state = await service.get_state("o")
+    assert state["messages"][-1]["options"] == CHOICES["person_home_ownership"]  # survives a page reload
+
+
+async def test_free_text_questions_have_no_options(service):
+    events = [e async for e in service.stream_turn("f", "u", "hello", "t")]
+    message = next(e for e in events if e["type"] == "message")
+    assert message["options"] == [] and "reply with one of" not in message["text"]

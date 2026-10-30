@@ -31,45 +31,17 @@
   <!-- APPLY -->
   <section class="panel" id="tab-apply">
     <div class="chat-col">
-      <div class="notice">Demo with fictional lenders. Use made-up details: traces are public and PII-masked.</div>
       <div id="thread" class="thread" aria-live="polite"></div>
       <div class="suggestions" id="suggestions"></div>
       <form id="composer" class="composer">
-        <textarea id="input" rows="1" placeholder="Say hi, or describe yourself and the loan you need…" maxlength="1000"></textarea>
+        <textarea id="input" rows="1" placeholder="Type a message…" maxlength="1000"></textarea>
         <button type="submit" id="send" aria-label="Send">Send</button>
       </form>
+      <div class="footer-row">
+        <span class="muted small">Demo with fictional lenders. Please use made-up details.</span>
+        <button class="link-button small" id="new-app" type="button">Start over</button>
+      </div>
     </div>
-
-    <aside class="side-col">
-      <div class="card">
-        <div class="card-head">
-          <h2>Application</h2>
-          <span class="pill" id="status-pill">new</span>
-        </div>
-        <p class="muted small" id="app-id"></p>
-        <dl class="fields" id="fields"></dl>
-        <button class="ghost wide" id="new-app">Start a new application</button>
-      </div>
-
-      <div class="card" id="decision-card" hidden></div>
-
-      <div class="card">
-        <h2>Lender policy <span class="muted small" id="policy-lender"></span></h2>
-        <div class="policy-bar" id="policy-bar"></div>
-        <ul class="policy-list" id="policy-list"></ul>
-      </div>
-
-      <div class="card">
-        <h2>Under the hood</h2>
-        <p class="muted small">What the last turn did. Every reply links to its full trace.</p>
-        <ol class="steps" id="steps"><li class="muted">Send a message to see the agent's steps.</li></ol>
-      </div>
-
-      <div class="card">
-        <h2>Try these</h2>
-        <div class="scenarios" id="scenarios"></div>
-      </div>
-    </aside>
   </section>
 
   <!-- UNDERWRITER -->
