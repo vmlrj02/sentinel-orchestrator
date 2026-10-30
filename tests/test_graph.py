@@ -81,7 +81,8 @@ async def test_choice_questions_list_their_options(service):
     events = [e async for e in service.stream_turn("o", "u", "hello", "t")]
     message = next(e for e in events if e["type"] == "message")
     assert message["options"] == CHOICES["person_home_ownership"]
-    assert message["text"].endswith("Please reply with one of: Rent, Own, Mortgage or Other.")
+    assert message["text"] == ("Thanks. Do you rent or own your home?\n\n"
+                               "Please reply with one of: Rent, Own, Mortgage or Other.")
     state = await service.get_state("o")
     assert state["messages"][-1]["options"] == CHOICES["person_home_ownership"]  # survives a page reload
 

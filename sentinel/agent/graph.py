@@ -38,6 +38,7 @@ from ..store import ApplicationRecord, ApplicationStore, now
 from ..tenants import get_tenant, max_approvable_loan
 from .llm import AgentLLM
 from .state import (
+    CHOICE_QUESTIONS,
     CHOICES,
     FIELD_LABELS,
     REQUIRED_FIELDS,
@@ -103,14 +104,19 @@ def _fmt(value: Any) -> str:
     return str(value).capitalize() if str(value).isupper() else str(value)
 
 
-def with_choices(text: str, state: dict[str, Any]) -> AIMessage:
+def with_choices(text: str, state: dict[str, Any], ask_in_code: bool = False) -> AIMessage:
     """Reply asking for the next detail. If that detail has fixed answers, say so explicitly and attach
-    them as quick replies. Done in code so it never depends on the LLM remembering to list them."""
+    them as quick replies, in code, so it never depends on the LLM remembering to list them.
+
+    ask_in_code: replace the LLM's question with a fixed one for choice fields, so the question and
+    its options can never disagree (the LLM may want a detail the code already considers collected)."""
     missing = missing_fields(state)
     if not missing:
         options = ["Yes", "No"]  # the confirmation summary
     elif missing[0] in CHOICES:
         options = CHOICES[missing[0]]
+        if ask_in_code:
+            text = f"Thanks. {CHOICE_QUESTIONS[missing[0]]}"
         listed = ", ".join(options[:-1]) + f" or {options[-1]}"
         text = f"{text.rstrip()}\n\nPlease reply with one of: {listed}."
     else:
@@ -209,7 +215,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         # The summary is built here, not by the LLM, so the user always sees exactly what will be scored
         if not missing_fields(merged):
             chat_text = summary_message(merged)
-        return {**updates, "messages": [with_choices(chat_text, merged)]}
+        return {**updates, "messages": [with_choices(chat_text, merged, ask_in_code=True)]}
 
     async def scoring(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         """Scores the confirmed application, applies the lender's policy, and records the decision."""

@@ -14,7 +14,7 @@ REQUIRED_FIELDS = [
 
 # Plain-language meaning of each field, shown to the interviewer LLM
 FIELD_LABELS = {
-    "person_name": "full name",
+    "person_name": "name",
     "person_age": "age in years",
     "person_income": "annual income",
     "person_emp_length": "years at current job",
@@ -33,6 +33,13 @@ CHOICES = {
     "loan_intent": ["Personal", "Education", "Medical", "Venture", "Home improvement", "Debt consolidation"],
     "loan_grade": ["A", "B", "C", "D", "E", "F", "G"],
     "cb_person_default_on_file": ["Yes", "No"],
+}
+
+CHOICE_QUESTIONS = {
+    "person_home_ownership": "Do you rent or own your home?",
+    "loan_intent": "What is the loan for?",
+    "loan_grade": "What loan grade were you given?",
+    "cb_person_default_on_file": "Have you ever defaulted on a loan before?",
 }
 
 # Labels for the confirmation summary shown to the applicant
