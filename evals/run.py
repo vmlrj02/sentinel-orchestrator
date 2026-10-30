@@ -36,7 +36,7 @@ from .cases import CASES, Case
 
 EVAL_DIR = Path(__file__).parent
 REPORT_DIR = EVAL_DIR / "reports"
-UI_SUMMARY = Path(__file__).parents[1] / "sentinel" / "api" / "static" / "eval-summary.json"
+UI_SUMMARY = Path(__file__).parents[1] / "sentinel" / "api" / "eval-summary.json"  # served to admins only
 
 
 # --- Retrieval ------------------------------------------------------------------------------------

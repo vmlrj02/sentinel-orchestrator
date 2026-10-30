@@ -47,6 +47,9 @@ class Settings:
     max_message_chars: int
     max_history_messages: int
 
+    # Internal endpoints (review queue, audit log, metrics, docs) need this bearer token
+    admin_token: str | None
+
     # Telegram
     telegram_token: str | None
     telegram_mode: str  # "polling" (local), "webhook" (Lambda) or "off"
@@ -89,6 +92,7 @@ def load_settings() -> Settings:
         turn_timeout_s=float(_env("TURN_TIMEOUT_S", "60") or 60),
         max_message_chars=_int("MAX_MESSAGE_CHARS", 1000),
         max_history_messages=_int("MAX_HISTORY_MESSAGES", 30),
+        admin_token=_env("ADMIN_TOKEN"),
         telegram_token=_env("TELEGRAM_TOKEN"),
         telegram_mode=_env("TELEGRAM_MODE", "polling") or "polling",
         telegram_webhook_secret=_env("TELEGRAM_WEBHOOK_SECRET"),

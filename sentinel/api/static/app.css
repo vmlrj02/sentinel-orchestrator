@@ -69,14 +69,6 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 .brand svg path { fill: none; stroke: var(--accent-text); stroke-width: 2.4; stroke-linejoin: round; }
 .brand strong { display: block; font-size: 1.05rem; line-height: 1.1; }
 .brand span { font-size: .78rem; color: var(--muted); }
-.tabs { display: flex; gap: .25rem; background: var(--surface-2); padding: .25rem; border-radius: 10px; }
-.tabs button {
-  border: 0; background: transparent; color: var(--muted); padding: .35rem .9rem; border-radius: 8px; font-weight: 500;
-}
-.tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
-.count { background: var(--warn); color: var(--surface); border-radius: 99px; padding: 0 .45rem; font-size: .75rem; margin-left: .2rem; }
-.top-actions { display: flex; align-items: center; gap: 1rem; }
-.lender { font-size: .82rem; color: var(--muted); display: flex; align-items: center; gap: .4rem; }
 select, input, textarea {
   font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: .35rem .55rem;
 }
@@ -117,41 +109,6 @@ main { flex: 1; display: flex; min-height: 0; }
 .typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: .25 } 40% { opacity: 1 } }
 
-/* Decision */
-.decision { border-radius: 12px; padding: .8rem 1rem; display: flex; flex-direction: column; gap: .5rem; }
-.decision.approved { background: var(--ok-soft); } .decision.declined { background: var(--bad-soft); } .decision.referred { background: var(--warn-soft); }
-.decision h3 { margin: 0; font-size: 1rem; text-transform: capitalize; }
-.decision.approved h3 { color: var(--ok); } .decision.declined h3 { color: var(--bad); } .decision.referred h3 { color: var(--warn); }
-.gauge { position: relative; height: 10px; border-radius: 99px; background: linear-gradient(90deg, var(--ok-soft), var(--warn-soft), var(--bad-soft)); border: 1px solid var(--border); }
-.gauge .zone { position: absolute; top: -1px; bottom: -1px; border-left: 1px dashed var(--muted); }
-.gauge .marker { position: absolute; top: -5px; width: 4px; height: 18px; background: var(--text); border-radius: 2px; transform: translateX(-2px); }
-.factors { display: grid; grid-template-columns: 1fr auto; gap: .2rem .6rem; font-size: .8rem; }
-.factor-bar { height: 6px; border-radius: 99px; align-self: center; }
-.factor-name { overflow-wrap: anywhere; }
-
-/* Side panel */
-.pill { font-size: .75rem; font-weight: 600; padding: .1rem .6rem; border-radius: 99px; background: var(--surface-2); color: var(--muted); text-transform: capitalize; }
-.pill.collecting { background: var(--accent-soft); color: var(--accent); }
-.pill.confirming { background: var(--warn-soft); color: var(--warn); }
-.pill.under_review { background: var(--warn-soft); color: var(--warn); }
-.pill.decided { background: var(--ok-soft); color: var(--ok); }
-.fields { display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem; margin: .5rem 0 1rem; font-size: .85rem; }
-.fields dt { color: var(--muted); }
-.fields dd { margin: 0; font-weight: 500; text-align: right; }
-.fields dd.empty { color: var(--border); font-weight: 400; }
-.ghost { border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: 8px; padding: .4rem .8rem; }
-.wide { width: 100%; }
-.policy-bar { position: relative; height: 26px; border-radius: 8px; overflow: hidden; display: flex; font-size: .7rem; font-weight: 600; margin: .4rem 0 .6rem; }
-.policy-bar div { display: flex; align-items: center; justify-content: center; white-space: nowrap; }
-.policy-list { margin: 0; padding-left: 1.1rem; font-size: .85rem; color: var(--muted); }
-.steps { margin: .25rem 0 0; padding-left: 1.2rem; font-size: .85rem; display: flex; flex-direction: column; gap: .3rem; }
-.steps code { font-family: var(--mono); font-size: .78rem; background: var(--surface-2); border-radius: 4px; padding: 0 .3rem; }
-.scenarios { display: flex; flex-direction: column; gap: .5rem; }
-.scenario { text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: .55rem .75rem; color: var(--text); }
-.scenario:hover { border-color: var(--accent); }
-.scenario strong { display: block; font-size: .88rem; }
-.scenario span { font-size: .78rem; color: var(--muted); }
-
 /* Composer */
 .suggestions { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
 .suggestions button { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 99px; padding: .2rem .7rem; font-size: .8rem; }
@@ -161,36 +118,6 @@ main { flex: 1; display: flex; min-height: 0; }
 .composer textarea:focus-visible { outline: none; }
 .composer button { border: 0; background: var(--accent); color: var(--accent-text); border-radius: 10px; padding: .55rem 1.1rem; font-weight: 600; }
 .composer button:disabled { opacity: .5; cursor: default; }
-
-/* Underwriter */
-.section-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
-.reviewer { font-size: .85rem; color: var(--muted); display: flex; gap: .4rem; align-items: center; }
-.queue { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
-.review { display: flex; flex-direction: column; gap: .6rem; }
-.review header { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
-.review .reason { font-size: .85rem; background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: .35rem .6rem; }
-.review textarea { width: 100%; min-height: 54px; resize: vertical; }
-.review .actions { display: flex; gap: .5rem; }
-.review .actions button { flex: 1; border: 0; border-radius: 8px; padding: .5rem; font-weight: 600; }
-.approve { background: var(--ok); color: var(--surface); } .decline { background: var(--bad); color: var(--surface); }
-.empty-state { text-align: center; padding: 2rem 1rem; color: var(--muted); border: 1px dashed var(--border); border-radius: var(--radius); }
-.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-table { border-collapse: collapse; width: 100%; font-size: .84rem; }
-th, td { text-align: left; padding: .55rem .75rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
-th { color: var(--muted); font-weight: 600; background: var(--surface-2); }
-tr:last-child td { border-bottom: 0; }
-.tag { font-size: .75rem; font-weight: 600; border-radius: 6px; padding: .05rem .45rem; }
-.tag.approved { background: var(--ok-soft); color: var(--ok); } .tag.declined { background: var(--bad-soft); color: var(--bad); }
-.tag.pending_review { background: var(--warn-soft); color: var(--warn); }
-
-/* System */
-.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .85rem; }
-.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
-.stat .label { font-size: .78rem; color: var(--muted); }
-.stat .value { font-size: 1.6rem; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: .15rem; }
-.stat .sub { font-size: .75rem; color: var(--muted); }
-.eval-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .85rem; margin-bottom: 1rem; }
-.links { padding-left: 1.1rem; }
 
 @media (max-width: 900px) {
   .panel { flex-direction: column; padding: 1rem; }
@@ -207,8 +134,4 @@ tr:last-child td { border-bottom: 0; }
 .options button { border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); border-radius: 99px; padding: .25rem .8rem; font-size: .85rem; font-weight: 500; }
 .options button:hover { background: var(--accent); color: var(--accent-text); }
 .options button:disabled { opacity: .45; cursor: default; }
-.decision-line { font-size: .8rem; font-weight: 600; border-radius: 8px; padding: .25rem .6rem; align-self: flex-start; }
-.decision-line.approved { background: var(--ok-soft); color: var(--ok); }
-.decision-line.declined { background: var(--bad-soft); color: var(--bad); }
-.decision-line.referred { background: var(--warn-soft); color: var(--warn); }
 

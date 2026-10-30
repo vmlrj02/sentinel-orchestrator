@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sentinel Underwriting</title>
-<meta name="description" content="Conversational loan underwriting: LangGraph agent with RAG, tool calling, human review, evals and tracing.">
+<title>Sentinel Loan Assistant</title>
+<meta name="description" content="Apply for a personal loan in a short chat, or ask about the lender's policies.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23215f4f'/><path d='M16 6l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V9z' fill='none' stroke='white' stroke-width='2.4' stroke-linejoin='round'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -12,81 +12,23 @@
 <header class="topbar">
   <div class="brand">
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M16 6l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V9z"/></svg>
-    <div><strong>Sentinel</strong><span>Conversational loan underwriting</span></div>
-  </div>
-  <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="apply" aria-selected="true">Apply</button>
-    <button role="tab" data-tab="underwriter">Underwriter <span class="count" id="review-count" hidden></span></button>
-    <button role="tab" data-tab="system">System</button>
-  </nav>
-  <div class="top-actions">
-    <label class="lender">Lender
-      <select id="lender"></select>
-    </label>
-    <a class="icon-link" href="https://github.com/vmlrj02/sentinel-orchestrator" target="_blank" rel="noopener" title="Source code">GitHub ↗</a>
+    <div><strong>Sentinel</strong><span>Loan assistant</span></div>
   </div>
 </header>
 
 <main>
-  <!-- APPLY -->
-  <section class="panel" id="tab-apply">
+  <section class="panel">
     <div class="chat-col">
       <div id="thread" class="thread" aria-live="polite"></div>
       <div class="suggestions" id="suggestions"></div>
       <form id="composer" class="composer">
-        <textarea id="input" rows="1" placeholder="Type a message…" maxlength="1000"></textarea>
+        <textarea id="input" rows="1" placeholder="Type a message…" maxlength="1000" aria-label="Message"></textarea>
         <button type="submit" id="send" aria-label="Send">Send</button>
       </form>
       <div class="footer-row">
-        <span class="muted small">Demo with fictional lenders. Please use made-up details.</span>
+        <span class="muted small">Demo with a fictional lender. Please use made-up details.</span>
         <button class="link-button small" id="new-app" type="button">Start over</button>
       </div>
-    </div>
-  </section>
-
-  <!-- UNDERWRITER -->
-  <section class="panel" id="tab-underwriter" hidden>
-    <div class="wide-col">
-      <div class="section-head">
-        <div>
-          <h1>Review queue</h1>
-          <p class="muted">Borderline or large applications pause here. Your decision resumes the applicant's conversation, and the advisor explains it to them.</p>
-        </div>
-        <label class="reviewer">Reviewing as <input id="reviewer" maxlength="60" value="demo-underwriter"></label>
-      </div>
-      <div id="queue" class="queue"></div>
-
-      <h2 class="spaced">Decision audit log</h2>
-      <p class="muted">Every decision with who made it, the model and prompt versions, and its trace.</p>
-      <div class="table-wrap"><table id="audit"><thead><tr>
-        <th>Application</th><th>Lender</th><th>Decision</th><th>Decided by</th><th>Default risk</th><th>Versions</th><th>Trace</th>
-      </tr></thead><tbody></tbody></table></div>
-    </div>
-  </section>
-
-  <!-- SYSTEM -->
-  <section class="panel" id="tab-system" hidden>
-    <div class="wide-col">
-      <div class="section-head">
-        <div>
-          <h1>Service health</h1>
-          <p class="muted">Live from this instance's metrics (also exported for Prometheus at <a href="/metrics">/metrics</a>). Refreshes every 5 seconds.</p>
-        </div>
-        <div class="muted small" id="sys-models"></div>
-      </div>
-      <div class="stats" id="stats"></div>
-
-      <h2 class="spaced">Quality: latest eval run</h2>
-      <p class="muted">Scripted applicants with known answers, graded by code checks and an LLM judge. Every prompt or model change is measured against this before it ships. <a href="https://github.com/vmlrj02/sentinel-orchestrator/blob/main/evals/HISTORY.md" target="_blank" rel="noopener">How these numbers improved ↗</a></p>
-      <div id="evals"></div>
-
-      <h2 class="spaced">Links</h2>
-      <ul class="links">
-        <li><a href="/docs" target="_blank">API reference (OpenAPI)</a></li>
-        <li><a href="/metrics" target="_blank">Prometheus metrics</a></li>
-        <li><a href="/readyz" target="_blank">Readiness check</a></li>
-        <li><a href="https://github.com/vmlrj02/sentinel-orchestrator" target="_blank" rel="noopener">Source, architecture and decision records</a></li>
-      </ul>
     </div>
   </section>
 </main>

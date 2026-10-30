@@ -3,6 +3,7 @@ import asyncio
 import hmac
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -65,6 +66,18 @@ class ScoreIn(BaseModel):
     cb_person_default_on_file: Literal["Y", "N"]
 
 
+def public_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """What the public chat may see. The model record, policy thresholds and what-if internals stay
+    server-side (audit log, traces); the applicant gets the advisor's plain-English explanation."""
+    if event["type"] == "assessment":
+        return {"type": "assessment", "policy_decision": event["policy_decision"]}
+    if event["type"] in ("what_if", "under_review"):
+        return None
+    if event["type"] == "tool_call":
+        return {"type": "tool_call", "name": event["name"]}
+    return event
+
+
 def create_app(settings: Settings | None = None, runtime_factory: Any = build_runtime) -> FastAPI:
     settings = settings or load_settings()
     configure_logging(settings.log_level)
@@ -93,8 +106,25 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
             if app.state.telegram:
                 await app.state.telegram.close()
 
+    local = settings.environment == "local"
     app = FastAPI(title="Sentinel Orchestrator", version="1.0.0", lifespan=lifespan,
-                  description="Conversational loan underwriting: LangGraph agent, RAG, human review.")
+                  description="Conversational loan underwriting: LangGraph agent, RAG, human review.",
+                  # API docs only in local development; the public deployment exposes just the chat
+                  docs_url="/docs" if local else None, redoc_url=None, openapi_url="/openapi.json" if local else None)
+
+    def require_admin(authorization: str = Header("")) -> None:
+        """Internal endpoints: applicants' data, the review queue, metrics. Never public."""
+        token = settings.admin_token
+        if not token or not hmac.compare_digest(authorization, f"Bearer {token}"):
+            raise HTTPException(404)  # 404, not 401: don't advertise that the endpoint exists
+
+    def web_conversation(conversation_id: str) -> str:
+        """The public chat may only touch its own random web conversations, never e.g. tg-<chat id>."""
+        if not re.fullmatch(r"web-[0-9a-f]{32}", conversation_id):
+            raise HTTPException(404)
+        return conversation_id
+
+    admin = [Depends(require_admin)]
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     def runtime(request: Request) -> Runtime:
@@ -115,13 +145,19 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
     async def index() -> FileResponse:
         return FileResponse(STATIC / "index.html")
 
+    @app.get("/admin", include_in_schema=False)
+    async def admin_page() -> FileResponse:
+        """Static shell only; every number on it comes from token-protected endpoints. The token is in
+        the URL fragment, which browsers do not send to servers or proxies."""
+        return FileResponse(STATIC / "admin.html", headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
     # --- Operations ---------------------------------------------------------------------------------
 
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/readyz", tags=["ops"])
+    @app.get("/readyz", tags=["ops"], dependencies=admin)
     async def readyz(request: Request) -> dict[str, Any]:
         rt = runtime(request)
         await rt.service.graph.aget_state({"configurable": {"thread_id": "readiness-probe"}})
@@ -133,11 +169,11 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
         """Non-HTTP Lambda events (the keep-warm schedule) arrive here via the Lambda Web Adapter."""
         return {"status": "warm"}
 
-    @app.get("/metrics", include_in_schema=False)
+    @app.get("/metrics", include_in_schema=False, dependencies=admin)
     async def prometheus() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-    @app.get("/v1/system", tags=["ops"])
+    @app.get("/v1/system", tags=["ops"], dependencies=admin)
     async def system(request: Request) -> dict[str, Any]:
         """Live service numbers for the UI's System panel."""
         rt = runtime(request)
@@ -151,7 +187,14 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
 
     # --- Chat ---------------------------------------------------------------------------------------
 
-    @app.get("/v1/lenders", tags=["chat"])
+    @app.get("/v1/evals", tags=["ops"], dependencies=admin)
+    async def evals() -> Any:
+        path = Path(__file__).parent / "eval-summary.json"
+        if not path.exists():
+            raise HTTPException(404)
+        return json.loads(path.read_text())
+
+    @app.get("/v1/lenders", tags=["chat"], dependencies=admin)
     async def lenders() -> list[dict[str, Any]]:
         return [{"id": t.id, "name": t.name, "approve_below": t.approve_below, "decline_above": t.decline_above,
                  "auto_limit": t.auto_limit, "max_loan_to_income": t.max_loan_to_income} for t in TENANTS.values()]
@@ -161,11 +204,13 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
         return {"conversation_id": f"web-{uuid4().hex}"}
 
     @app.get("/v1/conversations/{conversation_id}", tags=["chat"])
-    async def get_conversation(conversation_id: str, request: Request) -> dict[str, Any]:
-        return await runtime(request).service.get_state(conversation_id)
+    async def get_conversation(request: Request, conversation_id: str = Depends(web_conversation)) -> dict[str, Any]:
+        state = await runtime(request).service.get_state(conversation_id)
+        # The applicant's own chat; the internal model/policy record stays server-side
+        return {k: state[k] for k in ("conversation_id", "status", "messages")}
 
     @app.post("/v1/conversations/{conversation_id}/messages", tags=["chat"])
-    async def send_message(conversation_id: str, body: MessageIn, request: Request,
+    async def send_message(body: MessageIn, request: Request, conversation_id: str = Depends(web_conversation),
                            accept: str = Header("text/event-stream")) -> Any:
         """Streams the reply as server-sent events, or returns JSON with `Accept: application/json`."""
         service = runtime(request).service
@@ -175,11 +220,14 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
 
         if "application/json" in accept:
             result = await service.run_turn(conversation_id, user_id, body.text, "web", body.lender)
-            return asdict(result)
+            return {"conversation_id": result.conversation_id, "trace_id": result.trace_id,
+                    "messages": result.messages, "error": result.error,
+                    "decision": result.assessment["policy_decision"] if result.assessment else None}
 
         async def sse() -> AsyncIterator[str]:
             async for event in service.stream_turn(conversation_id, user_id, body.text, "web", body.lender):
-                yield f"event: {event['type']}\ndata: {json.dumps(event, default=str)}\n\n"
+                if (public := public_event(event)) is not None:
+                    yield f"event: {public['type']}\ndata: {json.dumps(public, default=str)}\n\n"
 
         return StreamingResponse(sse(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -191,11 +239,11 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
 
     # --- Underwriting -------------------------------------------------------------------------------
 
-    @app.get("/v1/reviews", tags=["underwriting"])
+    @app.get("/v1/reviews", tags=["underwriting"], dependencies=admin)
     async def reviews(request: Request, lender: str | None = None) -> list[dict[str, Any]]:
         return [asdict(r) for r in await runtime(request).service.list_reviews(lender)]
 
-    @app.post("/v1/reviews/{application_id}", tags=["underwriting"])
+    @app.post("/v1/reviews/{application_id}", tags=["underwriting"], dependencies=admin)
     async def submit_review(application_id: str, body: ReviewIn, request: Request) -> dict[str, Any]:
         try:
             result = await runtime(request).service.submit_review(application_id, body.decision, body.reviewer,
@@ -204,13 +252,13 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
             raise HTTPException(409, str(e)) from e
         return asdict(result)
 
-    @app.get("/v1/applications", tags=["underwriting"])
+    @app.get("/v1/applications", tags=["underwriting"], dependencies=admin)
     async def applications(request: Request, lender: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         """Audit log of decisions: who decided, with which model and prompt versions, and the trace."""
         rows = await runtime(request).service.store.list(tenant_id=lender, limit=min(limit, 100))
         return [asdict(r) for r in rows]
 
-    @app.post("/v1/score", tags=["underwriting"])
+    @app.post("/v1/score", tags=["underwriting"], dependencies=admin)
     async def score(body: ScoreIn) -> dict[str, Any]:
         """Direct access to the credit model, bypassing the conversation."""
         application = body.model_dump()
