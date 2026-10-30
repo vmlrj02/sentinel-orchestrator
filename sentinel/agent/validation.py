@@ -37,8 +37,16 @@ def bounds(field: str, tenant: Tenant) -> tuple[float, float]:
     }[field]
 
 
-def out_of_range_message(field: str, tenant: Tenant) -> str:
+def out_of_range_message(field: str, tenant: Tenant, value: float) -> str:
     lo, hi = bounds(field, tenant)
+    if field == "person_income" and value <= 0:
+        # Not a typo but an eligibility question: say so kindly instead of quoting a range
+        return (f"{tenant.name} needs applicants to have a regular income, such as a salary, self-employment, "
+                "a pension or benefits. If you have any income, how much is it per year?")
+    if field == "person_income":
+        return "That income looks too high to be right. Could you check the amount per year?"
+    if field == "person_age" and value < lo:
+        return f"You need to be at least {lo:g} to apply. How old are you?"
     if field == "loan_amnt":
         return f"{tenant.name} lends between {lo:,.0f} and {hi:,.0f}. How much would you like to borrow?"
     if field == "loan_int_rate":
@@ -53,7 +61,8 @@ def validate(updates: dict[str, Any], tenant: Tenant) -> tuple[dict[str, Any], s
     for field in NUMERIC_FIELDS:
         if field in clean:
             lo, hi = bounds(field, tenant)
-            if not lo <= float(clean[field]) <= hi:
+            value = float(clean[field])
+            if not lo <= value <= hi:
                 del clean[field]
-                error = error or out_of_range_message(field, tenant)
+                error = error or out_of_range_message(field, tenant, value)
     return clean, error

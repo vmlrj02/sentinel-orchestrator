@@ -117,3 +117,10 @@ async def test_out_of_policy_loan_amount_is_rejected_with_the_range(service):
     result = await service.run_turn("lim", "u", "1", "t")
     assert result.messages[-1] == "Aster Bank lends between 1,000 and 40,000. How much would you like to borrow?"
     assert "loan_amnt" not in (await service.get_state("lim"))["application"]
+
+
+async def test_zero_income_gets_an_eligibility_answer_not_a_loop(service):
+    await service.run_turn("zero", "u", "person_age=77", "t")
+    result = await service.run_turn("zero", "u", "0", "t")
+    assert "needs applicants to have a regular income" in result.messages[-1]
+    assert "person_income" not in (await service.get_state("zero"))["application"]
