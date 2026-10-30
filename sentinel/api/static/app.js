@@ -12,16 +12,9 @@ const FIELD_LABELS = {
   loan_grade: "Loan grade", cb_person_cred_hist_length: "Credit history", cb_person_default_on_file: "Previous default",
 };
 
-const EXAMPLES = [
-  "Hi",
-  "Hi, I'd like a personal loan",
-  "What documents do I need to apply?",
-  "Is there a fee if I repay early?",
-  "I'm Priya, 29, earning 55k a year, 4 years at my job, renting. I'd like 12000 for my master's at 11.2%, grade B, 5 years of credit history and no defaults.",
-];
 
 const SUGGESTIONS = {
-  new: [],
+  new: ["Hi", "I'd like a personal loan", "What documents do I need?", "Is there a fee if I repay early?"],
   collecting: ["What documents do I need?", "Is there a fee to repay early?"],
   confirming: [],
   under_review: [],
@@ -75,13 +68,11 @@ async function api(path, options = {}) {
 function scrollThread() { const t = $("#thread"); t.scrollTop = t.scrollHeight; }
 
 function addUser(text) {
-  $("#welcome")?.remove();
   $("#thread").append(el("div", { class: "msg user" }, el("div", { class: "bubble" }, text)));
   scrollThread();
 }
 
 function addBot(text = "", { error = false } = {}) {
-  $("#welcome")?.remove();
   const bubble = el("div", { class: "bubble" });
   const msg = el("div", { class: `msg bot${error ? " error" : ""}` }, el("div", { class: "chips" }), bubble);
   if (text) renderText(bubble, text, []);
@@ -294,20 +285,12 @@ function renderSuggestions() {
 
 /* ---------- Conversation lifecycle ---------- */
 
-function welcome() {
-  const lender = app.lenders.find((l) => l.id === app.lender);
-  $("#thread").append(el("div", { class: "welcome", id: "welcome" },
-    el("h1", {}, `Loan assistant for ${lender?.name ?? "your lender"}`),
-    el("p", { class: "muted" }, "Apply for a personal loan in a short chat, or ask anything about the lender's policies. Try one of these:"),
-    el("div", { class: "examples" }, EXAMPLES.map((text) => el("button", { type: "button", onclick: () => send(text) }, text)))));
-}
 
 function newConversation() {
   app.cid = null;
   app.messageCount = 0;
   store.set("sentinel.cid", "");
   $("#thread").textContent = "";
-  welcome();
   renderState(null);
 }
 
@@ -318,10 +301,10 @@ function setLender(id) {
 }
 
 async function restore() {
-  if (!app.cid) { welcome(); renderState(null); return; }
+  if (!app.cid) { renderState(null); return; }
   try {
     const state = await api(`/v1/conversations/${encodeURIComponent(app.cid)}`);
-    if (!state.messages.length) { welcome(); renderState(state); return; }
+    if (!state.messages.length) { renderState(state); return; }
     setLender(state.lender.id);
     state.messages.forEach((m, i) => {
       if (m.role === "user") { addUser(m.text); return; }
