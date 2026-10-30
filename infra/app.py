@@ -22,6 +22,12 @@ from aws_cdk import (
     aws_ecr_assets as ecr_assets,
 )
 from aws_cdk import (
+    aws_events as events,
+)
+from aws_cdk import (
+    aws_events_targets as targets,
+)
+from aws_cdk import (
     aws_lambda as lambda_,
 )
 from aws_cdk import (
@@ -73,11 +79,14 @@ class SentinelStack(cdk.Stack):
                 ROOT, platform=ecr_assets.Platform.LINUX_ARM64,
                 exclude=["infra", "cdk.out", ".venv", ".git", "_scratch", "data", "logs"]),
             architecture=lambda_.Architecture.ARM_64,
-            memory_size=1536,  # pandas + scikit-learn + LangGraph; more memory also means more CPU
+            memory_size=3008,  # Lambda allocates CPU in proportion to memory: ~2 vCPUs, faster cold starts
             timeout=Duration.seconds(120),
             log_group=log_group,
             environment={
                 "ENVIRONMENT": "aws",
+                # If start-up passes Lambda's 10 s init limit, finish it in the first request instead of
+                # being killed and restarted
+                "AWS_LWA_ASYNC_INIT": "true",
                 "SECRETS_ARN": secret.secret_arn,
                 "CHECKPOINTER": "dynamodb",
                 "CHECKPOINT_TABLE": checkpoints.table_name,
@@ -95,6 +104,11 @@ class SentinelStack(cdk.Stack):
         for table in (checkpoints, applications, locks):
             table.grant_read_write_data(fn)
         fn.add_to_role_policy(cdk.aws_iam.PolicyStatement(actions=["cloudwatch:GetMetricData"], resources=["*"]))
+
+        # Keep one instance warm so a reviewer's first click doesn't pay a cold start. The adapter
+        # delivers non-HTTP events to POST /events.
+        events.Rule(self, "KeepWarm", schedule=events.Schedule.rate(Duration.minutes(5)),
+                    targets=[targets.LambdaFunction(fn)])
 
         url = fn.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE,
                                   invoke_mode=lambda_.InvokeMode.RESPONSE_STREAM)

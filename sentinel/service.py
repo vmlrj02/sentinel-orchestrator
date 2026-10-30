@@ -31,6 +31,12 @@ from .tenants import DEFAULT_TENANT, TENANTS, get_tenant
 
 logger = logging.getLogger(__name__)
 
+try:  # provider errors that survive the SDK's retries and the fallback model
+    from openai import APIConnectionError, APIStatusError, RateLimitError
+    _PROVIDER_ERRORS: tuple[type[Exception], ...] = (RateLimitError, APIConnectionError, APIStatusError)
+except ImportError:  # pragma: no cover
+    _PROVIDER_ERRORS = ()
+
 Event = dict[str, Any]
 Notifier = Callable[[str, list[str]], Awaitable[None]]
 
@@ -160,6 +166,13 @@ class ChatService:
             self.tracer.publish(trace_id)
             yield {"type": "done", "conversation_id": conversation_id, "trace_id": trace_id,
                    "trace_url": self.tracer.trace_url(trace_id)}
+        except _PROVIDER_ERRORS as e:
+            # Quota exhausted or provider down after retries and the fallback model: say so plainly
+            outcome = "llm_unavailable"
+            logger.error("LLM provider unavailable",
+                         extra={"fields": {"error": type(e).__name__, "detail": str(e)[:300]}})
+            yield {"type": "error", "code": "llm_unavailable", "trace_id": trace_id,
+                   "message": "Our AI assistant is temporarily unavailable. Please try again in a few minutes."}
         except TimeoutError:
             outcome = "timeout"
             logger.error("Turn timed out", extra={"fields": {"timeout_s": self.settings.turn_timeout_s}})

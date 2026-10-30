@@ -15,3 +15,4 @@ logs/
 .ipynb_checkpoints/
 data/
 cdk.out/
+cdk-outputs.json

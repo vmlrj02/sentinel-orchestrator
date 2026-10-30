@@ -13,9 +13,6 @@ dependencies = [
     # scoring service (scikit-learn pinned to the version the model was saved with)
     "fastapi>=0.115",
     "uvicorn>=0.30",
-    "pandas>=2.2",
-    "joblib>=1.4",
-    "scikit-learn==1.7.2",
     "langfuse>=5",
     "langgraph-checkpoint-sqlite>=3",
     "aiosqlite>=0.22.1",
@@ -23,15 +20,19 @@ dependencies = [
     "prometheus-client>=0.26",
     "langgraph-checkpoint-aws>=1.2",
     "boto3>=1.43",
+    "numpy>=2",
 ]
 
 [dependency-groups]
 dev = [
+    "joblib>=1.4",
     "moto[cloudwatch,dynamodb,secretsmanager]>=5",
     "mypy>=2.4.1",
+    "pandas>=2.2",
     "pytest>=8",
     "pytest-asyncio>=1",
     "ruff>=0.17.3",
+    "scikit-learn==1.7.2",
 ]
 infra = [
     "aws-cdk-lib==2.266.0",

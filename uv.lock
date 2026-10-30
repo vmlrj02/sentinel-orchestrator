@@ -1447,27 +1447,28 @@ dependencies = [
     { name = "boto3" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "joblib" },
     { name = "langchain-openai" },
     { name = "langfuse" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-aws" },
     { name = "langgraph-checkpoint-sqlite" },
-    { name = "pandas" },
+    { name = "numpy" },
     { name = "prometheus-client" },
     { name = "python-dotenv" },
-    { name = "scikit-learn" },
     { name = "tenacity" },
     { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "joblib" },
     { name = "moto", extra = ["dynamodb"] },
     { name = "mypy" },
+    { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+    { name = "scikit-learn" },
 ]
 infra = [
     { name = "aws-cdk-lib" },
@@ -1480,27 +1481,28 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.43" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "joblib", specifier = ">=1.4" },
     { name = "langchain-openai", specifier = ">=0.3" },
     { name = "langfuse", specifier = ">=5" },
     { name = "langgraph", specifier = ">=0.6" },
     { name = "langgraph-checkpoint-aws", specifier = ">=1.2" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3" },
-    { name = "pandas", specifier = ">=2.2" },
+    { name = "numpy", specifier = ">=2" },
     { name = "prometheus-client", specifier = ">=0.26" },
     { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "scikit-learn", specifier = "==1.7.2" },
     { name = "tenacity", specifier = ">=9" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "joblib", specifier = ">=1.4" },
     { name = "moto", extras = ["cloudwatch", "dynamodb", "secretsmanager"], specifier = ">=5" },
     { name = "mypy", specifier = ">=2.4.1" },
+    { name = "pandas", specifier = ">=2.2" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=1" },
     { name = "ruff", specifier = ">=0.17.3" },
+    { name = "scikit-learn", specifier = "==1.7.2" },
 ]
 infra = [
     { name = "aws-cdk-lib", specifier = "==2.266.0" },

@@ -68,3 +68,16 @@ async def test_stream_emits_tokens_then_done(service):
     assert types[0] == "status"
     assert "assessment" in types and "token" in types
     assert types[-1] == "done" and events[-1]["trace_id"]
+
+
+async def test_provider_outage_is_reported_clearly(service, fake_llm, monkeypatch):
+    import httpx
+    from openai import RateLimitError
+
+    async def out_of_quota(messages):
+        response = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com"))
+        raise RateLimitError("You have no credits remaining", response=response, body=None)
+
+    monkeypatch.setattr(fake_llm, "interview", out_of_quota)
+    result = await service.run_turn("c", "u", "hello", "test")
+    assert result.error == "llm_unavailable" and "temporarily unavailable" in result.messages[0]

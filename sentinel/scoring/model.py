@@ -4,15 +4,13 @@ From github.com/vmlrj02/creditRiskModel-logisticRegression, with one fix: the si
 one-hot encoding no longer drops every categorical column.
 """
 import asyncio
-import hashlib
 import json
 from functools import cache
 from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
-import joblib
-import pandas as pd
+import numpy as np
 
 MODEL_DIR = Path(__file__).resolve().parent / "model"
 
@@ -26,27 +24,35 @@ MODEL_FEATURES = [
 
 
 class CreditModel:
-    def __init__(self, model_dir: Path = MODEL_DIR) -> None:
-        self.model = joblib.load(model_dir / "logistic_credit_model.joblib")
-        self.scaler = joblib.load(model_dir / "scaler.joblib")
-        self.train_columns: list[str] = json.loads((model_dir / "train_columns.json").read_text())
-        # Recorded on every decision, so an audit can tell which model produced it
-        digest = hashlib.sha256()
-        for name in ("logistic_credit_model.joblib", "scaler.joblib", "train_columns.json"):
-            digest.update((model_dir / name).read_bytes())
-        self.version = f"logreg-{digest.hexdigest()[:10]}"
+    """Standardise, then logistic regression, in numpy. Weights come from the trained scikit-learn
+    model via scripts/export_model.py, so the runtime needs neither pandas nor scikit-learn."""
 
-    def encode(self, data: dict[str, Any]) -> pd.DataFrame:
-        # No drop_first: on a single row it would drop every categorical column.
-        # The reindex drops the baseline levels the model was trained without.
-        encoded = pd.get_dummies(pd.DataFrame([data]))
-        return encoded.reindex(columns=self.train_columns, fill_value=0).astype(float)
+    def __init__(self, model_dir: Path = MODEL_DIR) -> None:
+        weights = json.loads((model_dir / "logreg.json").read_text())
+        self.version: str = weights["version"]  # recorded on every decision for audit
+        self.train_columns: list[str] = weights["columns"]
+        self.mean = np.array(weights["mean"])
+        self.scale = np.array(weights["scale"])
+        self.coef = np.array(weights["coef"])
+        self.intercept = float(weights["intercept"])
+
+    def encode(self, data: dict[str, Any]) -> np.ndarray:
+        """One-hot encode like the training data: a categorical column such as loan_grade_B is 1 only
+        for that value; the baseline level (e.g. grade A) has no column and encodes as all zeros."""
+        row = []
+        for column in self.train_columns:
+            feature = next((c for c in CATEGORICAL if column.startswith(f"{c}_")), None)
+            if feature is None:
+                row.append(float(data.get(column) or 0))
+            else:
+                row.append(1.0 if str(data.get(feature)) == column[len(feature) + 1:] else 0.0)
+        return np.array(row)
 
     def predict(self, data: dict[str, Any]) -> dict[str, Any]:
-        x_scaled = self.scaler.transform(self.encode(data))
-        prediction = int(self.model.predict(x_scaled)[0])
-        proba = float(self.model.predict_proba(x_scaled)[0, 1])
-        contributions = self.contributions(data, x_scaled[0])
+        x_scaled = (self.encode(data) - self.mean) / self.scale
+        proba = float(1 / (1 + np.exp(-(x_scaled @ self.coef + self.intercept))))
+        prediction = int(proba >= 0.5)
+        contributions = self.contributions(data, x_scaled)
         return {
             "prediction": prediction,
             "decision": "declined" if prediction else "approved",
@@ -57,17 +63,16 @@ class CreditModel:
             },
         }
 
-    def contributions(self, data: dict[str, Any], x_scaled: Any) -> dict[str, float]:
+    def contributions(self, data: dict[str, Any], x_scaled: np.ndarray) -> dict[str, float]:
         """Per-feature contribution to the log-odds of default (scaled value x coefficient), sorted.
 
         One-hot columns are summed back into their original feature and labelled with the applicant's
         own value. Per-column values would credit a grade-B applicant with "loan_grade_D" (meaning
         "not being grade D lowered risk"), which reads as nonsense to people and LLMs alike.
         """
-        impacts = pd.Series(x_scaled * self.model.coef_[0], index=self.train_columns)
         grouped: dict[str, float] = {}
-        for column, value in impacts.items():
-            feature = next((c for c in CATEGORICAL if str(column).startswith(f"{c}_")), str(column))
+        for column, value in zip(self.train_columns, x_scaled * self.coef, strict=True):
+            feature = next((c for c in CATEGORICAL if column.startswith(f"{c}_")), column)
             grouped[feature] = grouped.get(feature, 0.0) + float(value)
         labelled = {f"{feature}={data.get(feature)}": round(v, 3) for feature, v in grouped.items()}
         return dict(sorted(labelled.items(), key=lambda kv: kv[1]))

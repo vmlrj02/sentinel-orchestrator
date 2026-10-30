@@ -128,6 +128,11 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
         return {"status": "ready", "models": settings.model_label, "checkpointer": settings.checkpointer,
                 "langfuse": rt.tracer.enabled, "policy_chunks": len(rt.retriever.chunks)}
 
+    @app.post("/events", include_in_schema=False)
+    async def lambda_events() -> dict[str, str]:
+        """Non-HTTP Lambda events (the keep-warm schedule) arrive here via the Lambda Web Adapter."""
+        return {"status": "warm"}
+
     @app.get("/metrics", include_in_schema=False)
     async def prometheus() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
