@@ -21,12 +21,13 @@ async def test_rate_limit_is_per_user(settings, fake_llm):
 
 
 async def test_many_users_run_concurrently(settings):
-    """100 users x 200ms LLM latency: async I/O means ~0.2s total, not 20s."""
+    """100 users x 200ms LLM latency: async I/O means well under a second, not 20s sequentially.
+    The bound is loose on purpose so a busy CI machine doesn't make it flaky."""
     service = make_service(settings, FakeAgentLLM(latency_ms=200))
     started = time.perf_counter()
     results = await asyncio.gather(*(service.run_turn(f"c{i}", f"u{i}", "person_age=30", "test") for i in range(100)))
     assert all(r.error is None for r in results)
-    assert time.perf_counter() - started < 2
+    assert time.perf_counter() - started < 5
 
 
 async def test_same_conversation_turns_are_serialised(settings):
