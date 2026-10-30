@@ -287,7 +287,19 @@ function autosize() {
   input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
 }
 
+/* ---------- Customer / Admin view ---------- */
+
+function setView(view) {
+  $("#view").value = view;
+  $("#customer-view").hidden = view !== "customer";
+  $("#admin-view").hidden = view !== "admin";
+  store.set("sentinel.view", view);
+  if (view === "admin") window.startAdmin();
+}
+
 async function boot() {
+  $("#view").addEventListener("change", (e) => setView(e.target.value));
+  setView(location.pathname === "/admin" ? "admin" : (store.get("sentinel.view") || "customer"));
   $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const t = $("#input").value; $("#input").value = ""; autosize(); send(t); });
   $("#input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); } });
   $("#input").addEventListener("input", autosize);

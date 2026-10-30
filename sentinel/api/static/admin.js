@@ -1,5 +1,8 @@
 "use strict";
 
+// Admin view: its own scope so its helpers don't clash with the chat's; exposes startAdmin only
+(() => {
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -39,12 +42,12 @@ function fmtField(key, value) {
   return String(value);
 }
 // The token lives in the URL fragment (#...), which browsers never send to the server or log
-const TOKEN = decodeURIComponent(location.hash.slice(1));
+const TOKEN = decodeURIComponent(location.hash.slice(1));  // optional when the admin view is public
 let lenders = [];
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: {
-    "content-type": "application/json", accept: "application/json", authorization: `Bearer ${TOKEN}` } });
+    "content-type": "application/json", accept: "application/json", ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}) } });
   if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
   return response.json();
 }
@@ -188,10 +191,15 @@ async function loadEvals() {
 /* ---------- Tabs & boot ---------- */
 
 
-async function boot() {
-  if (!TOKEN) { document.body.replaceChildren(el("p", { class: "muted", style: "padding:2rem" }, "Not found.")); return; }
+let adminStarted = false;
+
+/** Called by the view switch the first time Admin is opened. */
+async function startAdmin() {
+  if (adminStarted) return;
+  adminStarted = true;
   try { lenders = await api("/v1/lenders"); } catch {
-    document.body.replaceChildren(el("p", { class: "muted", style: "padding:2rem" }, "Not found.")); return;
+    $("#admin-view").replaceChildren(el("p", { class: "muted", style: "padding:2rem" }, "The admin view is not available."));
+    return;
   }
   $("#reviewer").value = store.get("sentinel.reviewer") || "admin";
   $("#reviewer").addEventListener("change", (e) => store.set("sentinel.reviewer", e.target.value));
@@ -200,4 +208,5 @@ async function boot() {
   setInterval(loadAudit, 15000);
 }
 
-boot();
+window.startAdmin = startAdmin;
+})();

@@ -37,7 +37,7 @@ from ..rag import Retriever
 from ..scoring.model import Scorer, get_credit_model
 from ..store import ApplicationRecord, ApplicationStore, now
 from ..tenants import get_tenant, max_approvable_loan
-from .dialogue import CHANGE_OPTIONS, CONFIRM, ESCAPES, next_slot, question_message, understand
+from .dialogue import CHANGE_OPTIONS, CONFIRM, ESCAPES, MAX_AMOUNT, next_slot, question_message, understand
 from .llm import AgentLLM
 from .state import (
     FIELD_LABELS,
@@ -183,7 +183,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
         slot = state.get("pending_slot") or next_slot(state)
         attempts = dict(state.get("slot_attempts") or {})
         updates: dict[str, Any] = {}
-        question = out_of_scope = None
+        question = out_of_scope = notice = None
         path = "filled_fast"
 
         if slot == CONFIRM and _PLAIN_YES.match(text):
@@ -194,7 +194,15 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             return {"pending_slot": CONFIRM, "messages": [AIMessage(
                 "No problem. What would you like to change? You can just tell me the right value.",
                 response_metadata={"options": CHANGE_OPTIONS})]}
-        elif (value := understand(slot, text)) is not None:
+        elif (value := understand(slot, text)) == MAX_AMOUNT:
+            # "the most you can give": the policy maximum for this applicant, stated so they can change it
+            income = state.get("person_income")
+            amount = tenant.max_loan if not income else \
+                max(tenant.min_loan, min(tenant.max_loan, tenant.max_loan_to_income * income // 500 * 500))
+            updates[slot] = float(amount)
+            limit = "for your income" if income and amount < tenant.max_loan else "on a personal loan"
+            notice = f"I've put down {amount:,.0f}, the most {tenant.name} lends {limit}. You can change it any time."
+        elif value is not None:
             updates[slot] = value
         else:
             missing = missing_fields(state)
@@ -267,7 +275,7 @@ def build_graph(llm: AgentLLM, scorer: Scorer, retriever: Retriever, store: Appl
             return updates  # the advisor answers, then the next question is appended
         if updates["pending_slot"] == CONFIRM and slot != CONFIRM:
             record_funnel("summary_shown")
-        return {**updates, "messages": [question_message(merged)]}
+        return {**updates, "messages": [question_message(merged, prefix=notice or "Thanks.")]}
 
     async def scoring(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         """Scores the confirmed application, applies the lender's policy, and records the decision."""

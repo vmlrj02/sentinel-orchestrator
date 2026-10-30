@@ -113,7 +113,9 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
                   docs_url="/docs" if local else None, redoc_url=None, openapi_url="/openapi.json" if local else None)
 
     def require_admin(authorization: str = Header("")) -> None:
-        """Internal endpoints: applicants' data, the review queue, metrics. Never public."""
+        """Internal endpoints: the review queue, decision log, metrics. Open only when PUBLIC_ADMIN is set."""
+        if settings.public_admin:
+            return
         token = settings.admin_token
         if not token or not hmac.compare_digest(authorization, f"Bearer {token}"):
             raise HTTPException(404)  # 404, not 401: don't advertise that the endpoint exists
@@ -147,9 +149,8 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
 
     @app.get("/admin", include_in_schema=False)
     async def admin_page() -> FileResponse:
-        """Static shell only; every number on it comes from token-protected endpoints. The token is in
-        the URL fragment, which browsers do not send to servers or proxies."""
-        return FileResponse(STATIC / "admin.html", headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+        """Same single page, opened on the Admin view."""
+        return FileResponse(STATIC / "index.html", headers={"X-Robots-Tag": "noindex"})
 
     # --- Operations ---------------------------------------------------------------------------------
 
@@ -169,7 +170,12 @@ def create_app(settings: Settings | None = None, runtime_factory: Any = build_ru
         """Non-HTTP Lambda events (the keep-warm schedule) arrive here via the Lambda Web Adapter."""
         return {"status": "warm"}
 
-    @app.get("/metrics", include_in_schema=False, dependencies=admin)
+    def require_token(authorization: str = Header("")) -> None:
+        token = settings.admin_token
+        if not token or not hmac.compare_digest(authorization, f"Bearer {token}"):
+            raise HTTPException(404)
+
+    @app.get("/metrics", include_in_schema=False, dependencies=[Depends(require_token)])
     async def prometheus() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 

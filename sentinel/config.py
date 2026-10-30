@@ -51,6 +51,7 @@ class Settings:
 
     # Internal endpoints (review queue, audit log, metrics, docs) need this bearer token
     admin_token: str | None
+    public_admin: bool  # demo: Admin view open to everyone (no token); the Prometheus endpoint still needs it
 
     # Telegram
     telegram_token: str | None
@@ -97,6 +98,7 @@ def load_settings() -> Settings:
         stall_limit=_int("STALL_LIMIT", 3),
         max_turns_per_conversation=_int("MAX_TURNS_PER_CONVERSATION", 40),
         admin_token=_env("ADMIN_TOKEN"),
+        public_admin=(_env("PUBLIC_ADMIN", "false") or "false").lower() == "true",
         telegram_token=_env("TELEGRAM_TOKEN"),
         telegram_mode=_env("TELEGRAM_MODE", "polling") or "polling",
         telegram_webhook_secret=_env("TELEGRAM_WEBHOOK_SECRET"),

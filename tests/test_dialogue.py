@@ -125,3 +125,30 @@ async def test_clarification_explains_the_current_question(service, fake_llm, te
     assert result.messages[-1].startswith("This is about where you live")
     assert "Please reply with one of: Rent, Own, Mortgage or Other." in result.messages[-1]
     assert fake_llm.calls == calls
+
+
+@pytest.mark.parametrize("text", ["what you can give me?", "the max you can give", "i said max that i am eligible for",
+                                  "as much as possible", "whatever you can give"])
+async def test_asking_for_the_maximum_fills_the_policy_limit(service, fake_llm, text):
+    cid = f"max{abs(hash(text))}"
+    await service.run_turn(cid, "u", "person_age=36 person_income=60000 person_emp_length=4", "t")
+    await service.run_turn(cid, "u", "other", "t")
+    calls = fake_llm.calls
+    result = await service.run_turn(cid, "u", text, "t")
+    assert result.messages[-1].startswith("I've put down 24,000, the most Aster Bank lends for your income.")
+    assert (await service.get_state(cid))["application"]["loan_amnt"] == 24_000  # 40% of 60,000
+    assert fake_llm.calls == calls
+
+
+async def test_frustration_gets_an_apology_and_a_recap(service, fake_llm):
+    await service.run_turn("fr", "u", "person_age=36 person_income=60000 person_emp_length=4", "t")
+    calls = fake_llm.calls
+    result = await service.run_turn("fr", "u", "i already told you stupid", "t")
+    assert result.messages[-1].startswith("Sorry, I've made this harder than it should be.")
+    assert "annual income 60,000" in result.messages[-1] and "Do you rent or own your home?" in result.messages[-1]
+    assert "Talk to a person" in result.options and fake_llm.calls == calls
+
+
+def test_homeless_is_other():
+    for text in ["i live on the streets", "homeless", "no fixed address"]:
+        assert understand("person_home_ownership", text) == "OTHER"

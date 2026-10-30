@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 NAMESPACE = "Sentinel"
 FUNNEL_STAGES = ["started", "summary_shown", "confirmed", "handoff_requested"]
 SLOT_EVENTS = ["filled_fast", "filled_llm", "reask", "invalid", "skipped", "declined"]
-COMMAND_NAMES = ["start_over", "clarify", "help", "summary", "human", "skip", "apply", "change",
+COMMAND_NAMES = ["start_over", "clarify", "frustrated", "help", "summary", "human", "skip", "apply", "change",
                  "sensitive_data_removed"]
 SLOTS = ["person_age", "person_income", "person_emp_length", "person_home_ownership", "loan_amnt",
          "loan_int_rate", "loan_intent", "loan_grade", "cb_person_cred_hist_length", "cb_person_default_on_file",

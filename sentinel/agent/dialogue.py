@@ -69,7 +69,8 @@ SYNONYMS: dict[str, list[tuple[str, str]]] = {
         (r"mortgage(d)?|(my )?home loan|housing loan", "MORTGAGE"),
         (r"rent(ing|ed|er)?|tenant|lease|paying rent", "RENT"),
         (r"own(ed|er|ing)?|(it'?s|is) mine|my (own )?(house|home|flat|apartment)|paid off", "OWN"),
-        (r"other|(live|living|stay|staying) with (my )?(parents|family|friends)|hostel|dorm", "OTHER"),
+        (r"other|(live|living|stay|staying) with (my )?(parents|family|friends)|hostel|dorm|homeless|"
+         r"no (fixed )?(home|address)|(live|living|sleep|sleeping) (on|in) the streets?|shelter", "OTHER"),
     ],
     "loan_intent": [
         (r"personal|wedding|travel|holiday|vacation", "PERSONAL"),
@@ -90,10 +91,19 @@ SYNONYMS: dict[str, list[tuple[str, str]]] = {
 _FILLER = re.compile(r"^\s*(i'?m|i am|it'?s|it is|i|just|um+|uh+|well|ok(ay)?|sure)\b[\s,]*", re.I)
 
 
+MAX_AMOUNT = "MAX"  # "the most you can give me": resolved from lender policy by the interviewer
+_MAX_INTENT = re.compile(r"(the )?(max(imum)?|most|as much as (possible|you can)|whatever|what(ever)? you can "
+                         r"(give|offer|lend)|how much (can|could) (i|you) (get|give|borrow|lend)|"
+                         r"what (am i|i'?m) eligible for|(max|amount) (that )?i'?m eligible for|"
+                         r"what you can give( me)?)\b", re.I)
+
+
 def understand(slot: str | None, text: str) -> Any | None:
     """Fast path: parse a short answer for the pending slot in code. None means "ask the LLM"."""
     if slot is None or slot not in REQUIRED_FIELDS or len(text) > 60:
         return None
+    if slot == "loan_amnt" and not re.search(r"\d", text) and _MAX_INTENT.search(text):
+        return MAX_AMOUNT
     if slot in NUMERIC_FIELDS:
         return parse_number(text)
     cleaned = text.strip().lower().rstrip(".!")

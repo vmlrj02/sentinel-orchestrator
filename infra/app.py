@@ -97,6 +97,7 @@ class SentinelStack(cdk.Stack):
                 "LANGFUSE_PUBLIC_TRACES": "true",
                 "FLUSH_TRACES_EACH_TURN": "true",  # the process freezes between invocations
                 "RATE_LIMIT_PER_MINUTE": "15",
+                "PUBLIC_ADMIN": "true",  # demo: the Admin view is open to everyone, as requested
                 "TURN_TIMEOUT_S": "60",
             },
         )

@@ -19,11 +19,19 @@ _CLARIFY = re.compile(r"^(what\??|huh|pardon)$|what do you (even )?mean|i don'?t
                       r"what does (that|this|it) mean|i'?m confused|^explain|(rent|own|grade|default|rate) what")
 
 
+# Frustration or insults: answered with an apology and a recap, never with the same question again
+_FRUSTRATED = re.compile(r"\b(stupid|idiot|dumb|useless|pathetic|wtf|f+u+c+k\w*|sh[i1]t|bloody|already (told|said)|"
+                         r"i (just )?(told|said) (you|that)|are you (deaf|blind|kidding|serious)|seriously|"
+                         r"not listening|you('re| are) (not )?(listening|reading))\b", re.I)
+
+
 def match_command(text: str) -> tuple[str, str] | None:
     """The whole message must be the command ("change my income", not a sentence that mentions it)."""
     cleaned = re.sub(r"\s+", " ", text.strip().lower())
     cleaned = cleaned if cleaned == "?" else cleaned.rstrip(".!?")
     cleaned = re.sub(r"^(please|pls|can i|could i|i want to|i'd like to)\s+", "", cleaned)
+    if len(cleaned.split()) <= 12 and not re.search(r"\d", cleaned) and _FRUSTRATED.search(cleaned):
+        return "frustrated", ""
     if len(cleaned.split()) <= 8 and not re.search(r"\d", cleaned) and _CLARIFY.search(cleaned):
         return "clarify", ""
     for name, pattern in _COMMANDS:

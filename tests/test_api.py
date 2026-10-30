@@ -124,3 +124,11 @@ def test_admin_page_and_panels(client):
     bad = client.post(f"/v1/conversations/{new_cid(client)}/messages", json={"text": "hi", "lender": "nope"},
                       headers={"accept": "application/json"})
     assert bad.json()["error"] == "unknown_lender"
+
+
+def test_public_admin_switch_opens_admin_views_but_not_prometheus(settings):
+    app = create_app(dataclasses.replace(settings, public_admin=True, admin_token="t"))
+    with TestClient(app) as c:
+        assert c.get("/v1/system").status_code == 200 and c.get("/v1/reviews").status_code == 200
+        assert c.get("/metrics").status_code == 404  # raw metrics still need the token
+        assert c.get("/v1/conversations/tg-1").status_code == 404  # other channels stay private

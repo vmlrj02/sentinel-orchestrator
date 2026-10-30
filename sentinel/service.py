@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, Remove
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Command
 
-from .agent.dialogue import CHANGE_OPTIONS, clarify_message, field_for, next_slot, question_message
+from .agent.dialogue import CHANGE_OPTIONS, ESCAPES, clarify_message, field_for, next_slot, question_message
 from .agent.graph import RESUME_OPTIONS
 from .agent.state import FIELD_LABELS, REQUIRED_FIELDS, SUMMARY_LABELS, application_fields
 from .commands import match_command
@@ -361,6 +361,17 @@ class ChatService:
             return reply
         if name == "clarify":
             reply = clarify_message(values)
+        elif name == "frustrated":
+            collected = application_fields(values)
+            recap = ", ".join(f"{SUMMARY_LABELS[f].lower()} {v:,.0f}" if isinstance(v, (int, float))
+                              else f"{SUMMARY_LABELS[f].lower()} {str(v).capitalize()}"
+                              for f, v in collected.items() if f in SUMMARY_LABELS)
+            question = question_message(values, prefix="")
+            reply = AIMessage(
+                "Sorry, I've made this harder than it should be. "
+                + (f"Here's what I have so far: {recap}. " if recap else "")
+                + f"{question.content}",
+                response_metadata={"options": [*question.response_metadata.get("options", []), *ESCAPES]})
         elif name == "help":
             reply = AIMessage(
                 f"I can help you apply for a personal loan with {lender} in a few short questions, and answer "
